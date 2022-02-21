@@ -6,14 +6,49 @@
         {
             "label": "Build and Run CUDA",
             "type": "shell",
-            "command": "mkdir -p build && nvcc.exe src/main.cu -o build/main && build/main.exe",
-            "options": {
-                "cwd": "${workspaceFolder}"
-            },
-            "problemMatcher": [],
             "group": {
                 "kind": "build",
                 "isDefault": true
+            },
+            "dependsOrder": "sequence",
+            "dependsOn": [
+                "mkdir",
+                "compile",
+                "run",
+                "openImage"
+            ],
+            "problemMatcher": []
+        },
+        {
+            "label": "mkdir",
+            "type": "shell",
+            "command": "mkdir -p build",
+            "options": {
+                "cwd": "${workspaceFolder}"
+            }
+        },
+        {
+            "label": "compile",
+            "type": "shell",
+            "command": "nvcc.exe src/main.cu -o build/main",
+            "options": {
+                "cwd": "${workspaceFolder}"
+            }
+        },
+        {
+            "label": "run",
+            "type": "shell",
+            "command": "./build/main.exe",
+            "options": {
+                "cwd": "${workspaceFolder}"
+            }
+        },
+        {
+            "label": "openImage",
+            "type": "shell",
+            "command": "start first.ppm",
+            "options": {
+                "cwd": "${workspaceFolder}"
             }
         }
     ]
