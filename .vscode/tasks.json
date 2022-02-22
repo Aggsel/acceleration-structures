@@ -14,8 +14,8 @@
             "dependsOn": [
                 "mkdir",
                 "compile",
-                "run",
-                "openImage"
+                // "run",
+                // "openImage"
             ],
             "problemMatcher": []
         },
