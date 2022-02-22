@@ -5,19 +5,49 @@
 #define IMAGE_WIDTH 256
 #define IMAGE_HEIGHT 256
 #define PIXEL_STRIDE 3
-#define PIXEL_TYPE unsigned char
+
+class Vec3{
+  float e[3];
+  public:
+    __host__ __device__ Vec3() {}
+    __host__ __device__ Vec3(float e0, float e1, float e2) { e[0] = e0; e[1] = e1; e[2] = e2; }
+    __host__ __device__ inline float x() const { return e[0]; }
+    __host__ __device__ inline float y() const { return e[1]; }
+    __host__ __device__ inline float z() const { return e[2]; }
+};
+
+__host__ __device__ Vec3 operator*(float lhs, Vec3 rhs){
+  return Vec3(lhs*rhs.x(), lhs*rhs.y(), lhs*rhs.z());
+}
+__host__ __device__ Vec3 operator+(Vec3 lhs, Vec3 rhs){
+  return Vec3(lhs.x()+rhs.x(), lhs.y()+rhs.y(), lhs.z()+rhs.z());
+}
+
+class Ray{
+  Vec3 org;
+  Vec3 dir;
+  public:
+    __device__ Ray() {}
+    __device__ Ray(const Vec3 a, const Vec3 b) { org = a; dir = b; }
+    __device__ Vec3 origin() const       { return org; }
+    __device__ Vec3 direction() const    { return dir; }
+    __device__ Vec3 point_at_parameter(float t) const { return org + t*dir; }
+};
 
 __global__
-void render(float *image){
+void render(Vec3 *image){
   int i = threadIdx.x + blockIdx.x * blockDim.x;
   int j = threadIdx.y + blockIdx.y * blockDim.y;
   if((i >= IMAGE_WIDTH) || (j >= IMAGE_HEIGHT)) return;
-  int pixel_index = j*IMAGE_WIDTH*3 + i*3;
-  image[pixel_index + 0] = float(i) / IMAGE_WIDTH;
-  image[pixel_index + 1] = float(j) / IMAGE_HEIGHT;
-  image[pixel_index + 2] = 0.2;
+  int pixel_index = j*IMAGE_WIDTH + i;
+
+  float u = float(i) / IMAGE_WIDTH;
+  float v = float(j) / IMAGE_WIDTH;
+
+  image[pixel_index] = Vec3(u, v, 0.2);
 }
 
+//TODO: Make "Vec3* ptr_img" instead.
 int write_image_buffer_to_disk(float *ptr_img, const char *fileName){
   // Write image to disk
   FILE *fp = fopen(fileName, "w");
@@ -42,14 +72,14 @@ int write_image_buffer_to_disk(float *ptr_img, const char *fileName){
 
 int main(void){
   const int img_pixels = IMAGE_HEIGHT * IMAGE_WIDTH;
-  float *ptr_img;
-  int img_size = img_pixels*sizeof(float)*PIXEL_STRIDE;
+  Vec3 *ptr_img;
+  int img_size = img_pixels*sizeof(Vec3);
 
-  int tx = 8;
-  int ty = 8;
+  int threads_x = 8;
+  int threads_y = 8;
 
-  dim3 blocks(IMAGE_WIDTH/tx+1,IMAGE_HEIGHT/ty+1);
-  dim3 threads(tx,ty);
+  dim3 blocks(IMAGE_WIDTH/threads_x+1,IMAGE_HEIGHT/threads_y+1);
+  dim3 threads(threads_x,threads_y);
 
   // Allocate 3ints per channel per pixel.
   cudaMallocManaged(&ptr_img, img_size);
@@ -57,9 +87,9 @@ int main(void){
 
   // Wait for GPU to finish before accessing on host
   cudaDeviceSynchronize();
-  write_image_buffer_to_disk(ptr_img, "first.ppm");
+  write_image_buffer_to_disk((float*)ptr_img, "output.ppm");
 
   // Free memory
   cudaFree(ptr_img);
   return 0;
-} 
+}

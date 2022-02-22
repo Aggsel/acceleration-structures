@@ -46,7 +46,7 @@
         {
             "label": "openImage",
             "type": "shell",
-            "command": "start first.ppm",
+            "command": "start output.ppm",
             "options": {
                 "cwd": "${workspaceFolder}"
             }
