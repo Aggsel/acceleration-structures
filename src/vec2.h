@@ -1,8 +1,8 @@
 #pragma once
 
 class Vec2{
-  float e[2];
   public:
+    float e[2];
     __host__ __device__ Vec2() {}
     __host__ __device__ Vec2(float e0, float e1) { e[0] = e0; e[1] = e1;}
     __host__ __device__ inline float x(){ return e[0]; }

@@ -47,6 +47,12 @@ __host__ __device__ float magnitude(Vec3 a){
   return sqrt(a.x()*a.x() + a.y()*a.y() + a.z()*a.z());
 }
 
+__host__ __device__ Vec3 cross(Vec3 a, Vec3 b){
+  return Vec3(  (a.y() * b.z()) - (a.z() - b.y()),
+                (a.z() * b.x()) - (a.x() - b.z()),
+                (a.x() * b.y()) - (a.y() - b.x()));
+}
+
 __host__ __device__ Vec3 normalize(Vec3 v){
   float mag = magnitude(v);
   return Vec3(v.x()/mag, v.y()/mag, v.z()/mag);

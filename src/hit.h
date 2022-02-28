@@ -5,4 +5,5 @@ struct RayHit{
     Vec3 pos;
     Vec3 normal;
     float dist;
+    Vec2 uv;
 };
