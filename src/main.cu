@@ -15,7 +15,7 @@
 #define PI 3.1415926535897932385
 #define EPSILON 0.000001
 
-__global__ void render(Vec3 *image, int image_width, int image_height, Vec3 horizontal, Vec3 vertical, Vec3 lower_left_corner, curandState *rand){
+__global__ void render(Vec3 *image, int image_width, int image_height, Vec3 horizontal, Vec3 vertical, Vec3 lower_left_corner, curandState *rand, int max_depth, int spp){
   int i = threadIdx.x + blockIdx.x * blockDim.x;
   int j = threadIdx.y + blockIdx.y * blockDim.y;
   if((i >= image_width) || (j >= image_height)) return;
@@ -25,11 +25,25 @@ __global__ void render(Vec3 *image, int image_width, int image_height, Vec3 hori
   // Usage: curand_uniform(&local_rand) returns a float 0..1
   // https://docs.nvidia.com/cuda/curand/device-api-overview.html
 
-  Vec2 uv = Vec2(float(i) / (image_width-1), float(j) / (image_height-1));
-  Ray ray = Ray(Vec3(0,0,0), lower_left_corner + uv.x()*horizontal + uv.y()*vertical - Vec3(0,0,0));
   Vec3 result = Vec3(0.0, 0.0, 0.0);
-  RayHit hit = trace(&ray);
-  result = result + shade(&ray, hit);
+  for (int k = 0; k < spp; k++){
+    Vec2 uv = Vec2((i + curand_uniform(&local_rand)) / (image_width-1), (j+ curand_uniform(&local_rand)) / (image_height-1));
+    // Vec2 uv = Vec2( float(i) / (image_width-1), float(j) / (image_height-1));
+    Ray ray = Ray(Vec3(0,0,0), lower_left_corner + uv.x()*horizontal + uv.y()*vertical - Vec3(0,0,0));
+    Vec3 out_col = color(&ray, &local_rand, max_depth);
+
+    float r = clamp01(out_col.x());
+    float g = clamp01(out_col.y());
+    float b = clamp01(out_col.z());
+    result = result + Vec3(r,g,b);
+  }
+  
+  //Gamma correction
+  float scale = 1.0 / spp;
+  float r = sqrt(scale * result.x());
+  float g = sqrt(scale * result.y());
+  float b = sqrt(scale * result.z());
+  result = Vec3(r,g,b);
 
   image[pixel_index] = result;
 }
@@ -45,23 +59,40 @@ __global__ void initKernels(int image_width, int image_height, unsigned long lon
   curand_init(rand_seed, pixel_index, 0, &rand[pixel_index]);
 }
 
-__device__ Vec3 shade(Ray *ray, RayHit hit){
-  if(hit.dist < 999999.0)
-    return hit.normal;
-  else
-    return Vec3(0.0, 0.0, 0.0);
+__device__ Vec3 color(Ray *ray, curandState *rand, int max_depth) {
+  float cur_attenuation = 1.0f;
+
+  for(int i = 0; i < max_depth; i++) {
+    RayHit hit;
+    if (intersectSphere(ray, &hit, Vec3(0, 0, -1), 0.5f) || intersectSphere(ray, &hit, Vec3(0, 1, -1), 0.7f)) {
+      Vec3 target = hit.pos + hit.normal + randomInUnitSphere(rand);
+      cur_attenuation *= 0.5f;
+      ray->org = hit.pos;
+      ray->dir = target-hit.pos;
+    }
+    else {
+      Vec3 unit_direction = normalize(ray->direction());
+      float t = 0.5f*(unit_direction.y() + 1.0f);
+      Vec3 c = (1.0f-t)*Vec3(1.0, 1.0, 1.0) + t*Vec3(0.5, 0.7, 1.0);
+      return cur_attenuation * c;
+    }
+  }
+  return Vec3(0.0, 0.0, 0.0);
 }
 
-__device__ RayHit trace(Ray *ray){
-  RayHit hit;
-  hit.dist = 9999999.0f; //TODO: This should be float.max.
-  hit.normal = Vec3(1,0,0);
-  hit.pos = Vec3(1,0,0);
-  intersectSphere(ray, &hit, Vec3( 0, 0,-1), 0.5f);
-  return hit;
+__device__ Vec3 randomInUnitSphere(curandState *rand){
+  while(true){
+    float x = (curand_uniform(rand) * 2.0) - 1.0;
+    float y = (curand_uniform(rand) * 2.0) - 1.0;
+    float z = (curand_uniform(rand) * 2.0) - 1.0;
+    Vec3 p = Vec3(x, y, z);
+    if(sqrMagnitude(p) >= 1)
+      continue;
+    return p;
+  }
 }
 
-/* From Möller & Trumbore, Fast, Minimum Storage Ray/Triangle Intersection*/
+/* From Möller & Trumbore, Fast, Minimum Storage Ray/Triangle Intersection */
 __device__ bool intersectTri(Ray *ray, RayHit *bestHit, Vec3 v0, Vec3 v1, Vec3 v2){
   Vec3 edge1 = v1 - v0;
   Vec3 edge2 = v2 - v0;
@@ -89,21 +120,27 @@ __device__ bool intersectTri(Ray *ray, RayHit *bestHit, Vec3 v0, Vec3 v1, Vec3 v
   return true;
 }
 
-__device__ void intersectSphere(Ray *ray, RayHit *bestHit, Vec3 point, float radius){
+//From Shirleys Ray Tracing in One Weekend.
+__device__ bool intersectSphere(Ray *ray, RayHit *bestHit, Vec3 point, float radius){
   Vec3 oc = ray->origin() - point;
-  float a = dot(ray->direction(), ray->direction());
-  float b = 2.0 * dot(oc, ray->direction());
-  float c = dot(oc,oc) - radius*radius;
-  float discriminant = b*b - 4*a*c;
-  if(discriminant > 0.0){
-    float t = (-b - sqrt(discriminant)) / (2.0*a);
-    if(t < bestHit->dist && t > 0){
-      bestHit->dist = t;
-      bestHit->pos = ray->point_along_ray(t);
+  float a = sqrMagnitude(ray->direction());
+  float half_b = dot(oc, ray->direction());
+  float c = sqrMagnitude(oc) - radius*radius;
 
-      bestHit->normal = normalize(bestHit->pos - point);
-    }
+  float discriminant = half_b*half_b - a*c;
+  if (discriminant < 0) return false;
+  float sqrtd = sqrt(discriminant);
+
+  float root = (-half_b - sqrtd) / a;
+  if (root < 0.00001 || 999999.0 < root) {
+      root = (-half_b + sqrtd) / a;
+      if (root < 0.00001 || 999999.0 < root)
+          return false;
   }
+  bestHit->dist = root;
+  bestHit->pos = ray->point_along_ray(bestHit->dist);
+  bestHit->normal = (bestHit->pos - point) / radius;
+  return true;
 }
 
 int serializeImageBuffer(Vec3 *ptr_img, const char *fileName, int image_width, int image_height){
@@ -137,6 +174,9 @@ int main(int argc, char *argv[]){
   int image_width = 256;
   int image_height = 256;
 
+  int max_depth = 10;
+  int samples_per_pixel = 500;
+
   float aspect_ratio = image_width / image_height;
   float viewport_height = 2.0;
   float viewport_width = aspect_ratio * viewport_height;
@@ -160,7 +200,7 @@ int main(int argc, char *argv[]){
   println("Initializing kernels...");
   initKernels<<<blocks, threads>>>(image_width, image_height, 1337, d_rand_state);
   println("Initialization complete. Starting Rendering...");
-  render<<<blocks, threads>>>(ptr_img, image_width, image_height, horizontal, vertical, lower_left_corner, d_rand_state);
+  render<<<blocks, threads>>>(ptr_img, image_width, image_height, horizontal, vertical, lower_left_corner, d_rand_state, max_depth, samples_per_pixel);
   cudaDeviceSynchronize();
 
   println("Render complete, writing to disk...");
@@ -168,5 +208,6 @@ int main(int argc, char *argv[]){
   println("Saved to disk.");
 
   cudaFree(ptr_img);
+  cudaFree(d_rand_state);
   return 0;
 }

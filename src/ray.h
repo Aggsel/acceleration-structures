@@ -2,9 +2,9 @@
 #include "vec3.h"
 
 class Ray{
-  Vec3 org;
-  Vec3 dir;
   public:
+    Vec3 org;
+    Vec3 dir;
     __host__ __device__ Ray() {}
     __host__ __device__ Ray(const Vec3 a, const Vec3 b) { org = a; dir = b; }
     __host__ __device__ Vec3 origin() const { return org; }

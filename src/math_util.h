@@ -1,6 +1,6 @@
 #pragma once
 
-float clamp(float value, float min, float max){
+__device__ __host__ float clamp(float value, float min, float max){
     if(value < min)
         return min;
     if(value > max)
@@ -8,6 +8,6 @@ float clamp(float value, float min, float max){
     return value;
 }
 
-float clamp01(float value){
+__device__ __host__ float clamp01(float value){
     return clamp(value, 0, 1);
 }
