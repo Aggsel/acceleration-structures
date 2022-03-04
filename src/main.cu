@@ -10,12 +10,16 @@
 #include "ray.h"
 #include "hit.h"
 #include "main.h"
+
 #include "math_util.h"
+#include "helper_cuda.h"
+#define TINYOBJLOADER_IMPLEMENTATION 
+#include "tiny_obj_loader.h"
 
 #define PI 3.1415926535897932385
 #define EPSILON 0.000001
 
-__global__ void render(Vec3 *image, int image_width, int image_height, Vec3 horizontal, Vec3 vertical, Vec3 lower_left_corner, curandState *rand, int max_depth, int spp){
+__global__ void render(Vec3 *image, int image_width, int image_height, Vec3 horizontal, Vec3 vertical, Vec3 lower_left_corner, curandState *rand, int max_depth, int spp, Vec3 *vertices, int *indices){
   int pixel_x = threadIdx.x + blockIdx.x * blockDim.x;
   int pixel_y = threadIdx.y + blockIdx.y * blockDim.y;
   if((pixel_x >= image_width) || (pixel_y >= image_height)) return;
@@ -28,9 +32,8 @@ __global__ void render(Vec3 *image, int image_width, int image_height, Vec3 hori
   Vec3 result = Vec3(0.0, 0.0, 0.0);
   for (int i = 0; i < spp; i++){
     Vec2 uv = Vec2((pixel_x + curand_uniform(&local_rand)) / (image_width-1), (pixel_y+ curand_uniform(&local_rand)) / (image_height-1));
-    // Vec2 uv = Vec2( float(i) / (image_width-1), float(j) / (image_height-1));
     Ray ray = Ray(Vec3(0,0,0), lower_left_corner + uv.x()*horizontal + uv.y()*vertical - Vec3(0,0,0));
-    Vec3 out_col = color(&ray, &local_rand, max_depth);
+    Vec3 out_col = color(&ray, &local_rand, max_depth, vertices, indices);
 
     float r = clamp01(out_col.x());
     float g = clamp01(out_col.y());
@@ -59,21 +62,34 @@ __global__ void initKernels(int image_width, int image_height, unsigned long lon
   curand_init(rand_seed, pixel_index, 0, &rand[pixel_index]);
 }
 
-__device__ Vec3 color(Ray *ray, curandState *rand, int max_depth) {
+__device__ Vec3 color(Ray *ray, curandState *rand, int max_depth, Vec3 *vertices, int *indices) {
   float cur_attenuation = 1.0f;
-
   for(int i = 0; i < max_depth; i++) {
     RayHit hit;
-    //TODO: Seperate into a world object, containing an array of hittables.
-    //      Also, only use the closest hit.
-    if (intersectSphere(ray, &hit, Vec3(-0.8, 0, -1), 0.05f) || 
-        intersectSphere(ray, &hit, Vec3(0, -0.8, -1), 0.05f) || 
-        intersectSphere(ray, &hit, Vec3(0.8, 0, -1), 0.05f) || 
-        intersectTri(ray, &hit, Vec3(-0.7, 0.2, -0.6), Vec3(0, -0.8, -1), Vec3(0.8, 0, -1))) {
+    bool was_hit = false;
+                                      //BUG: Read below!
+    for (int j = 0; j < 114; j+=3){   //TODO: dynamically read indexcount, not always 144.
+      RayHit tempHit;
+      
+      if (!intersectTri(ray, &tempHit, vertices[indices[j]], vertices[indices[j+1]], vertices[indices[j+2]]))
+        continue; //Did not hit triangle.
+      
+      if(tempHit.dist > hit.dist)
+        continue; //Hit triangle but not closest intersection so far.
+
+      hit.dist = tempHit.dist;
+      hit.normal = tempHit.normal;
+      hit.pos = tempHit.pos;
+      hit.uv = tempHit.uv;
+      was_hit = true;
+    }
+
+    if(was_hit){
       Vec3 target = hit.pos + hit.normal + randomInUnitSphere(rand);
       cur_attenuation *= 0.5f;
       ray->org = hit.pos;
       ray->dir = target-hit.pos;
+      continue;
     }
     else {
       Vec3 unit_direction = normalize(ray->direction());
@@ -82,6 +98,7 @@ __device__ Vec3 color(Ray *ray, curandState *rand, int max_depth) {
       return cur_attenuation * c;
     }
   }
+  //BUG: If ray hit an object, the color returned seems to always be this.
   return Vec3(0.0, 0.0, 0.0);
 }
 
@@ -99,6 +116,7 @@ __device__ Vec3 randomInUnitSphere(curandState *rand){
 
 /* From Möller & Trumbore, Fast, Minimum Storage Ray/Triangle Intersection */
 __device__ bool intersectTri(Ray *ray, RayHit *bestHit, Vec3 v0, Vec3 v1, Vec3 v2){
+  // RayHit tempHit;
   Vec3 edge1 = v1 - v0;
   Vec3 edge2 = v2 - v0;
 
@@ -117,7 +135,10 @@ __device__ bool intersectTri(Ray *ray, RayHit *bestHit, Vec3 v0, Vec3 v1, Vec3 v
   if(bestHit->uv.y() < 0.0 || bestHit->uv.x() + bestHit->uv.y() > det)
     return false;
 
-  bestHit->dist = dot(edge2, qvec);;
+  if(dot(edge2, qvec) > bestHit->dist)
+    return false;
+
+  bestHit->dist = dot(edge2, qvec);
   float inv_det = 1.0 / det;
   bestHit->dist *= inv_det;
   bestHit->uv.e[0] *= inv_det;
@@ -159,6 +180,9 @@ int serializeImageBuffer(Vec3 *ptr_img, const char *fileName, int image_width, i
       float r = clamp01(abs(ptr_img[pixel_index].x()));
       float g = clamp01(abs(ptr_img[pixel_index].y()));
       float b = clamp01(abs(ptr_img[pixel_index].z()));
+      // float r = abs(ptr_img[pixel_index].x());
+      // float g = abs(ptr_img[pixel_index].y());
+      // float b = abs(ptr_img[pixel_index].z());
       int ir = int(255.99*r);
       int ig = int(255.99*g);
       int ib = int(255.99*b);
@@ -175,16 +199,66 @@ void println(const char* str){
 }
 
 int main(int argc, char *argv[]){
+  std::string filename = "test.obj";
+
+  tinyobj::ObjReaderConfig reader_config;
+  tinyobj::ObjReader reader;
+
+  if (!reader.ParseFromFile(filename, reader_config)) {
+    if (!reader.Error().empty()) {
+        std::cerr << "TinyObjReader: " << reader.Error();
+    }
+    exit(1);
+  }
+
+  if (!reader.Warning().empty()) {
+    std::cout << "TinyObjReader: " << reader.Warning();
+  }
+
+  const tinyobj::attrib_t &attrib = reader.GetAttrib();
+  const std::vector<tinyobj::shape_t> &shapes = reader.GetShapes();
+
+  std::cout << "\nFile '" << filename << "' loaded." << std::endl;
+  int vertex_count = (int)(attrib.vertices.size()) / 3;
+  printf("# of vertices  = %d\n", vertex_count);
+  int indices_count = (int)(shapes[0].mesh.indices.size());
+  printf("# of vertex indices   = %d\n", indices_count);
+  int normals_count = (int)(attrib.normals.size()) / 3;
+  printf("# of normals   = %d\n\n", normals_count);
+
+  //The Obj reader does not store vertex indices in contiguous memory.
+  //Copy the indices into a block of memory on the host device.
+  int *ptr_host_indices = (int*)malloc(sizeof(int) * indices_count);
+  for (int i = 0; i < indices_count; i++){
+    ptr_host_indices[i] = shapes[0].mesh.indices[i].vertex_index;
+  }
+
+  //Allocate and memcpy index, vertex and normal buffers from host to device.
+  int *ptr_device_indices;
+  checkCudaErrors(cudaMalloc((void**)&ptr_device_indices, indices_count * sizeof(int)));
+  checkCudaErrors(cudaMemcpy(ptr_device_indices, ptr_host_indices, indices_count * sizeof(int), cudaMemcpyHostToDevice));
+  free(ptr_host_indices);
+  
+  Vec3 *ptr_device_vertices;
+  checkCudaErrors(cudaMalloc(&ptr_device_vertices, vertex_count * sizeof(Vec3)));
+  checkCudaErrors(cudaMemcpy(ptr_device_vertices, attrib.vertices.data(), vertex_count * sizeof(Vec3), cudaMemcpyHostToDevice));
+
+  Vec3 *ptr_device_normals;
+  checkCudaErrors(cudaMalloc(&ptr_device_normals, normals_count * sizeof(Vec3)));
+  checkCudaErrors(cudaMemcpy(ptr_device_normals, attrib.normals.data(), vertex_count * sizeof(Vec3), cudaMemcpyHostToDevice));
+
   //Set default values for filename and image size.
   char* output_filename = "output.ppm";
-  int image_width = 1280;
-  int image_height = 720;
+  int image_width = 1280*0.5;
+  int image_height = 720*0.5;
 
-  int max_depth = 10;
+  int max_depth = 5;
   int samples_per_pixel = 500;
 
+  float theta = 90.0f * 0.0174532925f;
+  float h = tan(theta/2);
   float aspect_ratio = image_width / image_height;
-  float viewport_height = 2.0;
+  float viewport_height = 2.0 * h;
   float viewport_width = aspect_ratio * viewport_height;
   float focal_length = 1.0;
 
@@ -200,20 +274,23 @@ int main(int argc, char *argv[]){
 
   curandState *d_rand_state;
   Vec3 *ptr_img;
-  cudaMallocManaged(&d_rand_state, image_width * image_height*sizeof(curandState));
-  cudaMallocManaged(&ptr_img, image_width * image_height*sizeof(Vec3));
+  checkCudaErrors(cudaMallocManaged(&d_rand_state, image_width * image_height*sizeof(curandState)));
+  checkCudaErrors(cudaMallocManaged(&ptr_img, image_width * image_height*sizeof(Vec3)));
 
   println("Initializing kernels...");
   initKernels<<<blocks, threads>>>(image_width, image_height, 1337, d_rand_state);
   println("Initialization complete. Starting Rendering...");
-  render<<<blocks, threads>>>(ptr_img, image_width, image_height, horizontal, vertical, lower_left_corner, d_rand_state, max_depth, samples_per_pixel);
-  cudaDeviceSynchronize();
+  render<<<blocks, threads>>>(ptr_img, image_width, image_height, horizontal, vertical, lower_left_corner, d_rand_state, max_depth, samples_per_pixel, ptr_device_vertices, ptr_device_indices);
+  checkCudaErrors(cudaDeviceSynchronize());
 
   println("Render complete, writing to disk...");
   serializeImageBuffer(ptr_img, output_filename, image_width, image_height);
   println("Saved to disk.");
 
-  cudaFree(ptr_img);
-  cudaFree(d_rand_state);
+  checkCudaErrors(cudaFree(ptr_img));
+  checkCudaErrors(cudaFree(d_rand_state));
+  checkCudaErrors(cudaFree(ptr_device_indices));
+  checkCudaErrors(cudaFree(ptr_device_vertices));
+  checkCudaErrors(cudaFree(ptr_device_normals));
   return 0;
 }
