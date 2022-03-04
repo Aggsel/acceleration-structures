@@ -16,18 +16,18 @@
 #define EPSILON 0.000001
 
 __global__ void render(Vec3 *image, int image_width, int image_height, Vec3 horizontal, Vec3 vertical, Vec3 lower_left_corner, curandState *rand, int max_depth, int spp){
-  int i = threadIdx.x + blockIdx.x * blockDim.x;
-  int j = threadIdx.y + blockIdx.y * blockDim.y;
-  if((i >= image_width) || (j >= image_height)) return;
-  int pixel_index = j*image_width + i;
+  int pixel_x = threadIdx.x + blockIdx.x * blockDim.x;
+  int pixel_y = threadIdx.y + blockIdx.y * blockDim.y;
+  if((pixel_x >= image_width) || (pixel_y >= image_height)) return;
+  int pixel_index = pixel_y*image_width + pixel_x;
 
   curandState local_rand = rand[pixel_index];
   // Usage: curand_uniform(&local_rand) returns a float 0..1
   // https://docs.nvidia.com/cuda/curand/device-api-overview.html
 
   Vec3 result = Vec3(0.0, 0.0, 0.0);
-  for (int k = 0; k < spp; k++){
-    Vec2 uv = Vec2((i + curand_uniform(&local_rand)) / (image_width-1), (j+ curand_uniform(&local_rand)) / (image_height-1));
+  for (int i = 0; i < spp; i++){
+    Vec2 uv = Vec2((pixel_x + curand_uniform(&local_rand)) / (image_width-1), (pixel_y+ curand_uniform(&local_rand)) / (image_height-1));
     // Vec2 uv = Vec2( float(i) / (image_width-1), float(j) / (image_height-1));
     Ray ray = Ray(Vec3(0,0,0), lower_left_corner + uv.x()*horizontal + uv.y()*vertical - Vec3(0,0,0));
     Vec3 out_col = color(&ray, &local_rand, max_depth);
@@ -51,10 +51,10 @@ __global__ void render(Vec3 *image, int image_width, int image_height, Vec3 hori
 //As mentioned in Accelerated Ray Tracing in One Weekend (https://developer.nvidia.com/blog/accelerated-ray-tracing-cuda/)
 //It's a good idea to seperate initialization and actual rendering if we want accurate performance numbers. 
 __global__ void initKernels(int image_width, int image_height, unsigned long long rand_seed, curandState *rand){
-  int i = threadIdx.x + blockIdx.x * blockDim.x;
-  int j = threadIdx.y + blockIdx.y * blockDim.y;
-  if((i >= image_width) || (j >= image_height)) return;
-  int pixel_index = j*image_width + i;
+  int pixel_x = threadIdx.x + blockIdx.x * blockDim.x;
+  int pixel_y = threadIdx.y + blockIdx.y * blockDim.y;
+  if((pixel_x >= image_width) || (pixel_y >= image_height)) return;
+  int pixel_index = pixel_y*image_width + pixel_x;
 
   curand_init(rand_seed, pixel_index, 0, &rand[pixel_index]);
 }
@@ -64,7 +64,12 @@ __device__ Vec3 color(Ray *ray, curandState *rand, int max_depth) {
 
   for(int i = 0; i < max_depth; i++) {
     RayHit hit;
-    if (intersectSphere(ray, &hit, Vec3(0, 0, -1), 0.5f) || intersectSphere(ray, &hit, Vec3(0, 1, -1), 0.7f)) {
+    //TODO: Seperate into a world object, containing an array of hittables.
+    //      Also, only use the closest hit.
+    if (intersectSphere(ray, &hit, Vec3(-0.8, 0, -1), 0.05f) || 
+        intersectSphere(ray, &hit, Vec3(0, -0.8, -1), 0.05f) || 
+        intersectSphere(ray, &hit, Vec3(0.8, 0, -1), 0.05f) || 
+        intersectTri(ray, &hit, Vec3(-0.7, 0.2, -0.6), Vec3(0, -0.8, -1), Vec3(0.8, 0, -1))) {
       Vec3 target = hit.pos + hit.normal + randomInUnitSphere(rand);
       cur_attenuation *= 0.5f;
       ray->org = hit.pos;
@@ -112,11 +117,12 @@ __device__ bool intersectTri(Ray *ray, RayHit *bestHit, Vec3 v0, Vec3 v1, Vec3 v
   if(bestHit->uv.y() < 0.0 || bestHit->uv.x() + bestHit->uv.y() > det)
     return false;
 
-  bestHit->dist = dot(edge2, qvec);
+  bestHit->dist = dot(edge2, qvec);;
   float inv_det = 1.0 / det;
-  bestHit->dist = bestHit->dist * inv_det;
-  bestHit->uv.e[0] = bestHit->uv.e[0] * inv_det;
-  bestHit->uv.e[1] = bestHit->uv.e[1] * inv_det;
+  bestHit->dist *= inv_det;
+  bestHit->uv.e[0] *= inv_det;
+  bestHit->uv.e[1] *= inv_det;
+  bestHit->normal = cross(edge1, edge2);  //TODO: Lerp vertex normals instead.
   return true;
 }
 
@@ -171,8 +177,8 @@ void println(const char* str){
 int main(int argc, char *argv[]){
   //Set default values for filename and image size.
   char* output_filename = "output.ppm";
-  int image_width = 256;
-  int image_height = 256;
+  int image_width = 1280;
+  int image_height = 720;
 
   int max_depth = 10;
   int samples_per_pixel = 500;
