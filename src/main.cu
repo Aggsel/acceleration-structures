@@ -26,8 +26,6 @@ __global__ void render(Vec3 *image, int image_width, int image_height, Vec3 hori
   int pixel_index = pixel_y*image_width + pixel_x;
 
   curandState local_rand = rand[pixel_index];
-  // Usage: curand_uniform(&local_rand) returns a float 0..1
-  // https://docs.nvidia.com/cuda/curand/device-api-overview.html
 
   Vec3 result = Vec3(0.0, 0.0, 0.0);
   for (int i = 0; i < spp; i++){
@@ -68,7 +66,7 @@ __device__ Vec3 color(Ray *ray, curandState *rand, int max_depth, Vec3 *vertices
     RayHit hit;
     bool was_hit = false;
                                       //BUG: Read below!
-    for (int j = 0; j < 114; j+=3){   //TODO: dynamically read indexcount, not always 144.
+    for (int j = 0; j < 186; j+=3){   //TODO: dynamically read indexcount, not always 144.
       RayHit tempHit;
       
       if (!intersectTri(ray, &tempHit, vertices[indices[j]], vertices[indices[j+1]], vertices[indices[j+2]]))
@@ -88,7 +86,7 @@ __device__ Vec3 color(Ray *ray, curandState *rand, int max_depth, Vec3 *vertices
       Vec3 target = hit.pos + hit.normal + randomInUnitSphere(rand);
       cur_attenuation *= 0.5f;
       ray->org = hit.pos;
-      ray->dir = target-hit.pos;
+      ray->dir = hit.pos - target;
       continue;
     }
     else {
@@ -135,15 +133,17 @@ __device__ bool intersectTri(Ray *ray, RayHit *bestHit, Vec3 v0, Vec3 v1, Vec3 v
   if(bestHit->uv.y() < 0.0 || bestHit->uv.x() + bestHit->uv.y() > det)
     return false;
 
+  //NOTE: Should this really be done here?
   if(dot(edge2, qvec) > bestHit->dist)
     return false;
 
   bestHit->dist = dot(edge2, qvec);
   float inv_det = 1.0 / det;
-  bestHit->dist *= inv_det;
+  bestHit->dist = bestHit->dist * inv_det;
+  bestHit->pos = ray->point_along_ray(bestHit->dist - 2.0); //BUG: Why -2.0? Otherwise light gets trapped inside the objects.
   bestHit->uv.e[0] *= inv_det;
   bestHit->uv.e[1] *= inv_det;
-  bestHit->normal = cross(edge1, edge2);  //TODO: Lerp vertex normals instead.
+  bestHit->normal = normalize(cross(edge1, edge2));  //TODO: Lerp vertex normals instead.
   return true;
 }
 
@@ -180,9 +180,6 @@ int serializeImageBuffer(Vec3 *ptr_img, const char *fileName, int image_width, i
       float r = clamp01(abs(ptr_img[pixel_index].x()));
       float g = clamp01(abs(ptr_img[pixel_index].y()));
       float b = clamp01(abs(ptr_img[pixel_index].z()));
-      // float r = abs(ptr_img[pixel_index].x());
-      // float g = abs(ptr_img[pixel_index].y());
-      // float b = abs(ptr_img[pixel_index].z());
       int ir = int(255.99*r);
       int ig = int(255.99*g);
       int ib = int(255.99*b);
@@ -192,10 +189,6 @@ int serializeImageBuffer(Vec3 *ptr_img, const char *fileName, int image_width, i
 
   fclose(fp);
   return 0;
-}
-
-void println(const char* str){
-  std::cout << str << std::endl;
 }
 
 int main(int argc, char *argv[]){
@@ -220,11 +213,11 @@ int main(int argc, char *argv[]){
 
   std::cout << "\nFile '" << filename << "' loaded." << std::endl;
   int vertex_count = (int)(attrib.vertices.size()) / 3;
-  printf("# of vertices  = %d\n", vertex_count);
+  printf("# vertices        = %d\n", vertex_count);
   int indices_count = (int)(shapes[0].mesh.indices.size());
-  printf("# of vertex indices   = %d\n", indices_count);
+  printf("# vertex indices  = %d\n", indices_count);
   int normals_count = (int)(attrib.normals.size()) / 3;
-  printf("# of normals   = %d\n\n", normals_count);
+  printf("# normals         = %d\n\n", normals_count);
 
   //The Obj reader does not store vertex indices in contiguous memory.
   //Copy the indices into a block of memory on the host device.
@@ -249,8 +242,8 @@ int main(int argc, char *argv[]){
 
   //Set default values for filename and image size.
   char* output_filename = "output.ppm";
-  int image_width = 1280*0.5;
-  int image_height = 720*0.5;
+  int image_width = 512;
+  int image_height = 512;
 
   int max_depth = 5;
   int samples_per_pixel = 500;
@@ -267,8 +260,8 @@ int main(int argc, char *argv[]){
   Vec3 vertical = Vec3(0, viewport_height, 0);
   Vec3 lower_left_corner = origin - horizontal/2 - vertical/2 - Vec3(0, 0, focal_length);
 
-  int threads_x = 8;
-  int threads_y = 8;
+  int threads_x = 16;
+  int threads_y = 16;
   dim3 blocks(image_width/threads_x+1,image_height/threads_y+1);
   dim3 threads(threads_x,threads_y);
 
@@ -277,15 +270,15 @@ int main(int argc, char *argv[]){
   checkCudaErrors(cudaMallocManaged(&d_rand_state, image_width * image_height*sizeof(curandState)));
   checkCudaErrors(cudaMallocManaged(&ptr_img, image_width * image_height*sizeof(Vec3)));
 
-  println("Initializing kernels...");
+  printf("Initializing kernels... ");
   initKernels<<<blocks, threads>>>(image_width, image_height, 1337, d_rand_state);
-  println("Initialization complete. Starting Rendering...");
+  printf("Initialization complete.\nStarting Rendering... ");
   render<<<blocks, threads>>>(ptr_img, image_width, image_height, horizontal, vertical, lower_left_corner, d_rand_state, max_depth, samples_per_pixel, ptr_device_vertices, ptr_device_indices);
   checkCudaErrors(cudaDeviceSynchronize());
 
-  println("Render complete, writing to disk...");
+  printf("Render complete.\nWriting to disk... ");
   serializeImageBuffer(ptr_img, output_filename, image_width, image_height);
-  println("Saved to disk.");
+  printf("Saved to disk.\n");
 
   checkCudaErrors(cudaFree(ptr_img));
   checkCudaErrors(cudaFree(d_rand_state));
