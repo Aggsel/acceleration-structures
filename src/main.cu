@@ -170,8 +170,8 @@ __device__ bool intersectSphere(Ray *ray, RayHit *bestHit, Vec3 point, float rad
   return true;
 }
 
-int serializeImageBuffer(Vec3 *ptr_img, const char *fileName, int image_width, int image_height){
-  FILE *fp = fopen(fileName, "w");
+int serializeImageBuffer(Vec3 *ptr_img, const char *file_name, int image_width, int image_height){
+  FILE *fp = fopen(file_name, "w");
   fprintf(fp, "P3\n%d %d\n255\n", image_width, image_height);
 
   for (int j = image_height-1; j >= 0; j--) {
@@ -189,6 +189,28 @@ int serializeImageBuffer(Vec3 *ptr_img, const char *fileName, int image_width, i
 
   fclose(fp);
   return 0;
+}
+
+// Expands a 10-bit integer into 30 bits
+// by inserting 2 zeros after each bit.
+__device__ __host__ inline unsigned int expandBits(unsigned int v){
+  v = (v * 0x00010001u) & 0xFF0000FFu;
+  v = (v * 0x00000101u) & 0x0F00F00Fu;
+  v = (v * 0x00000011u) & 0xC30C30C3u;
+  v = (v * 0x00000005u) & 0x49249249u;
+  return v;
+}
+
+__device__ __host__ int mortonCode(Vec3 v){
+  //Clamp coordinates to 10 bits.
+  float x = min(max(v.x() * 1024.0f, 0.0f), 1023.0f);
+  float y = min(max(v.y() * 1024.0f, 0.0f), 1023.0f);
+  float z = min(max(v.z() * 1024.0f, 0.0f), 1023.0f);
+  //Bit shift componentwise before merging bits into morton code.
+  unsigned int xx = expandBits((unsigned int)x) << 2;
+  unsigned int yy = expandBits((unsigned int)y) << 1;
+  unsigned int zz = expandBits((unsigned int)z);
+  return xx + yy + zz;
 }
 
 int main(int argc, char *argv[]){
