@@ -50,6 +50,7 @@
         "set": "cpp",
         "sstream": "cpp",
         "string": "cpp",
-        "xtree": "cpp"
+        "xtree": "cpp",
+        "__config": "cpp"
     }
 }

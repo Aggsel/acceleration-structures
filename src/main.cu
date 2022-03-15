@@ -4,11 +4,14 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <curand_kernel.h>
+#include <thrust/sort.h>
 
+#include "render_config.h"
 #include "vec3.h"
 #include "vec2.h"
 #include "ray.h"
 #include "hit.h"
+#include "camera.h"
 #include "main.h"
 
 #include "math_util.h"
@@ -19,19 +22,19 @@
 #define PI 3.1415926535897932385
 #define EPSILON 0.000001
 
-__global__ void render(Vec3 *image, int image_width, int image_height, Vec3 horizontal, Vec3 vertical, Vec3 lower_left_corner, curandState *rand, int max_depth, int spp, Vec3 *vertices, int *indices){
+__global__ void render(Vec3 *output_image, Camera cam, curandState *rand, RenderConfig config, Vec3 *vertices, int *indices){
   int pixel_x = threadIdx.x + blockIdx.x * blockDim.x;
   int pixel_y = threadIdx.y + blockIdx.y * blockDim.y;
-  if((pixel_x >= image_width) || (pixel_y >= image_height)) return;
-  int pixel_index = pixel_y*image_width + pixel_x;
+  if((pixel_x >= config.img_width) || (pixel_y >= config.img_height)) return;
+  int pixel_index = pixel_y*config.img_width + pixel_x;
 
   curandState local_rand = rand[pixel_index];
 
   Vec3 result = Vec3(0.0, 0.0, 0.0);
-  for (int i = 0; i < spp; i++){
-    Vec2 uv = Vec2((pixel_x + curand_uniform(&local_rand)) / (image_width-1), (pixel_y+ curand_uniform(&local_rand)) / (image_height-1));
-    Ray ray = Ray(Vec3(0,0,0), lower_left_corner + uv.x()*horizontal + uv.y()*vertical - Vec3(0,0,0));
-    Vec3 out_col = color(&ray, &local_rand, max_depth, vertices, indices);
+  for (int i = 0; i < config.samples_per_pixel; i++){
+    Vec2 uv = Vec2((pixel_x + curand_uniform(&local_rand)) / (config.img_width-1), (pixel_y+ curand_uniform(&local_rand)) / (config.img_height-1));
+    Ray ray = Ray(Vec3(0,0,0), cam.lower_left_corner + uv.x()*cam.horizontal + uv.y()*cam.vertical - Vec3(0,0,0));
+    Vec3 out_col = color(&ray, &local_rand, config.max_bounces, vertices, indices);
 
     float r = clamp01(out_col.x());
     float g = clamp01(out_col.y());
@@ -40,13 +43,13 @@ __global__ void render(Vec3 *image, int image_width, int image_height, Vec3 hori
   }
   
   //Gamma correction
-  float scale = 1.0 / spp;
+  float scale = 1.0 / config.samples_per_pixel;
   float r = sqrt(scale * result.x());
   float g = sqrt(scale * result.y());
   float b = sqrt(scale * result.z());
   result = Vec3(r,g,b);
 
-  image[pixel_index] = result;
+  output_image[pixel_index] = result;
 }
 
 //As mentioned in Accelerated Ray Tracing in One Weekend (https://developer.nvidia.com/blog/accelerated-ray-tracing-cuda/)
@@ -170,6 +173,29 @@ __device__ bool intersectSphere(Ray *ray, RayHit *bestHit, Vec3 point, float rad
   return true;
 }
 
+// Expands a 10-bit integer into 30 bits
+// by inserting 2 zeros after each bit.
+__device__ __host__ inline unsigned int expandBits(unsigned int v){
+  v = (v * 0x00010001u) & 0xFF0000FFu;
+  v = (v * 0x00000101u) & 0x0F00F00Fu;
+  v = (v * 0x00000011u) & 0xC30C30C3u;
+  v = (v * 0x00000005u) & 0x49249249u;
+  return v;
+}
+
+//Expects an input 0..1
+__device__ __host__ int mortonCode(Vec3 v){
+  //Clamp coordinates to 10 bits.
+  float x = min(max(v.x() * 1024.0f, 0.0f), 1023.0f);
+  float y = min(max(v.y() * 1024.0f, 0.0f), 1023.0f);
+  float z = min(max(v.z() * 1024.0f, 0.0f), 1023.0f);
+  //Bit shift componentwise before merging bits into morton code.
+  unsigned int xx = expandBits((unsigned int)x) << 2;
+  unsigned int yy = expandBits((unsigned int)y) << 1;
+  unsigned int zz = expandBits((unsigned int)z);
+  return xx + yy + zz;
+}
+
 int serializeImageBuffer(Vec3 *ptr_img, const char *file_name, int image_width, int image_height){
   FILE *fp = fopen(file_name, "w");
   fprintf(fp, "P3\n%d %d\n255\n", image_width, image_height);
@@ -189,28 +215,6 @@ int serializeImageBuffer(Vec3 *ptr_img, const char *file_name, int image_width, 
 
   fclose(fp);
   return 0;
-}
-
-// Expands a 10-bit integer into 30 bits
-// by inserting 2 zeros after each bit.
-__device__ __host__ inline unsigned int expandBits(unsigned int v){
-  v = (v * 0x00010001u) & 0xFF0000FFu;
-  v = (v * 0x00000101u) & 0x0F00F00Fu;
-  v = (v * 0x00000011u) & 0xC30C30C3u;
-  v = (v * 0x00000005u) & 0x49249249u;
-  return v;
-}
-
-__device__ __host__ int mortonCode(Vec3 v){
-  //Clamp coordinates to 10 bits.
-  float x = min(max(v.x() * 1024.0f, 0.0f), 1023.0f);
-  float y = min(max(v.y() * 1024.0f, 0.0f), 1023.0f);
-  float z = min(max(v.z() * 1024.0f, 0.0f), 1023.0f);
-  //Bit shift componentwise before merging bits into morton code.
-  unsigned int xx = expandBits((unsigned int)x) << 2;
-  unsigned int yy = expandBits((unsigned int)y) << 1;
-  unsigned int zz = expandBits((unsigned int)z);
-  return xx + yy + zz;
 }
 
 int main(int argc, char *argv[]){
@@ -264,42 +268,29 @@ int main(int argc, char *argv[]){
 
   //Set default values for filename and image size.
   char* output_filename = "output.ppm";
-  int image_width = 512;
-  int image_height = 512;
-
-  int max_depth = 5;
-  int samples_per_pixel = 500;
-
-  float theta = 90.0f * 0.0174532925f;
-  float h = tan(theta/2);
-  float aspect_ratio = image_width / image_height;
-  float viewport_height = 2.0 * h;
-  float viewport_width = aspect_ratio * viewport_height;
-  float focal_length = 1.0;
-
-  Vec3 origin = Vec3(0, 0, 0);
-  Vec3 horizontal = Vec3(viewport_width, 0, 0);
-  Vec3 vertical = Vec3(0, viewport_height, 0);
-  Vec3 lower_left_corner = origin - horizontal/2 - vertical/2 - Vec3(0, 0, focal_length);
+  
+                    //w    h    spp   max_depth
+  RenderConfig config(512, 512, 1024, 2         );
+  Camera cam = Camera(config.img_width, config.img_height, 90.0f, 1.0f, Vec3(0,0,0));
 
   int threads_x = 16;
   int threads_y = 16;
-  dim3 blocks(image_width/threads_x+1,image_height/threads_y+1);
+  dim3 blocks(config.img_width/threads_x+1,config.img_height/threads_y+1);
   dim3 threads(threads_x,threads_y);
 
   curandState *d_rand_state;
   Vec3 *ptr_img;
-  checkCudaErrors(cudaMallocManaged(&d_rand_state, image_width * image_height*sizeof(curandState)));
-  checkCudaErrors(cudaMallocManaged(&ptr_img, image_width * image_height*sizeof(Vec3)));
+  checkCudaErrors(cudaMallocManaged(&d_rand_state, config.img_width * config.img_height*sizeof(curandState)));
+  checkCudaErrors(cudaMallocManaged(&ptr_img, config.img_width * config.img_height*sizeof(Vec3)));
 
   printf("Initializing kernels... ");
-  initKernels<<<blocks, threads>>>(image_width, image_height, 1337, d_rand_state);
+  initKernels<<<blocks, threads>>>(config.img_width, config.img_height, 1337, d_rand_state);
   printf("Initialization complete.\nStarting Rendering... ");
-  render<<<blocks, threads>>>(ptr_img, image_width, image_height, horizontal, vertical, lower_left_corner, d_rand_state, max_depth, samples_per_pixel, ptr_device_vertices, ptr_device_indices);
+  render<<<blocks, threads>>>(ptr_img, cam, d_rand_state, config, ptr_device_vertices, ptr_device_indices);
   checkCudaErrors(cudaDeviceSynchronize());
 
   printf("Render complete.\nWriting to disk... ");
-  serializeImageBuffer(ptr_img, output_filename, image_width, image_height);
+  serializeImageBuffer(ptr_img, output_filename, config.img_width, config.img_height);
   printf("Saved to disk.\n");
 
   checkCudaErrors(cudaFree(ptr_img));
