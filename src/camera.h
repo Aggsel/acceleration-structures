@@ -1,7 +1,7 @@
 #pragma once
 #include "vec3.h"
 
-__device__ __host__ struct Camera{
+struct Camera{
   public:
     float viewport_height;
     float viewport_width;

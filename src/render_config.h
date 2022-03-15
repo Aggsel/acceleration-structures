@@ -1,6 +1,6 @@
 #pragma once
 
-__device__ __host__ struct RenderConfig{
+struct RenderConfig{
     RenderConfig(int w, int h, int spp, int max_bounces){
         this->img_width = w;
         this->img_height = h;

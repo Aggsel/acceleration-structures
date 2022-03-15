@@ -22,7 +22,7 @@
 #define PI 3.1415926535897932385
 #define EPSILON 0.000001
 
-__global__ void render(Vec3 *output_image, Camera cam, curandState *rand, RenderConfig config, Vec3 *vertices, int *indices){
+__global__ void render(Vec3 *output_image, Camera cam, curandState *rand, RenderConfig config, Vec3 *vertices, int *indices, int vertex_count, Vec3 *normals){
   int pixel_x = threadIdx.x + blockIdx.x * blockDim.x;
   int pixel_y = threadIdx.y + blockIdx.y * blockDim.y;
   if((pixel_x >= config.img_width) || (pixel_y >= config.img_height)) return;
@@ -33,8 +33,8 @@ __global__ void render(Vec3 *output_image, Camera cam, curandState *rand, Render
   Vec3 result = Vec3(0.0, 0.0, 0.0);
   for (int i = 0; i < config.samples_per_pixel; i++){
     Vec2 uv = Vec2((pixel_x + curand_uniform(&local_rand)) / (config.img_width-1), (pixel_y+ curand_uniform(&local_rand)) / (config.img_height-1));
-    Ray ray = Ray(Vec3(0,0,0), cam.lower_left_corner + uv.x()*cam.horizontal + uv.y()*cam.vertical - Vec3(0,0,0));
-    Vec3 out_col = color(&ray, &local_rand, config.max_bounces, vertices, indices);
+    Ray ray = Ray(Vec3(0,0,0), normalize(cam.lower_left_corner + uv.x()*cam.horizontal + uv.y()*cam.vertical - Vec3(0,0,0)) );
+    Vec3 out_col = color(&ray, &local_rand, config.max_bounces, vertices, indices, vertex_count, normals);
 
     float r = clamp01(out_col.x());
     float g = clamp01(out_col.y());
@@ -63,16 +63,15 @@ __global__ void initKernels(int image_width, int image_height, unsigned long lon
   curand_init(rand_seed, pixel_index, 0, &rand[pixel_index]);
 }
 
-__device__ Vec3 color(Ray *ray, curandState *rand, int max_depth, Vec3 *vertices, int *indices) {
+__device__ Vec3 color(Ray *ray, curandState *rand, int max_depth, Vec3 *vertices, int *indices, int vertex_count, Vec3 *normals) {
   float cur_attenuation = 1.0f;
   for(int i = 0; i < max_depth; i++) {
     RayHit hit;
     bool was_hit = false;
-                                      //BUG: Read below!
-    for (int j = 0; j < 186; j+=3){   //TODO: dynamically read indexcount, not always 144.
+    for (int j = 0; j < vertex_count; j+=3){
       RayHit tempHit;
       
-      if (!intersectTri(ray, &tempHit, vertices[indices[j]], vertices[indices[j+1]], vertices[indices[j+2]]))
+      if (!intersectTri(ray, &tempHit, vertices[indices[j]], vertices[indices[j+1]], vertices[indices[j+2]], normals[indices[j]], normals[indices[j+1]], normals[indices[j+2]]))
         continue; //Did not hit triangle.
       
       if(tempHit.dist > hit.dist)
@@ -89,7 +88,7 @@ __device__ Vec3 color(Ray *ray, curandState *rand, int max_depth, Vec3 *vertices
       Vec3 target = hit.pos + hit.normal + randomInUnitSphere(rand);
       cur_attenuation *= 0.5f;
       ray->org = hit.pos;
-      ray->dir = hit.pos - target;
+      ray->dir = normalize(target - hit.pos);
       continue;
     }
     else {
@@ -99,7 +98,6 @@ __device__ Vec3 color(Ray *ray, curandState *rand, int max_depth, Vec3 *vertices
       return cur_attenuation * c;
     }
   }
-  //BUG: If ray hit an object, the color returned seems to always be this.
   return Vec3(0.0, 0.0, 0.0);
 }
 
@@ -116,13 +114,13 @@ __device__ Vec3 randomInUnitSphere(curandState *rand){
 }
 
 /* From Möller & Trumbore, Fast, Minimum Storage Ray/Triangle Intersection */
-__device__ bool intersectTri(Ray *ray, RayHit *bestHit, Vec3 v0, Vec3 v1, Vec3 v2){
-  // RayHit tempHit;
+__device__ bool intersectTri(Ray *ray, RayHit *bestHit, Vec3 v0, Vec3 v1, Vec3 v2, Vec3 n0, Vec3 n1, Vec3 n2){
   Vec3 edge1 = v1 - v0;
   Vec3 edge2 = v2 - v0;
 
   Vec3 pvec = cross(ray->direction(), edge2);
   float det = dot(edge1, pvec);
+  //Culling implementation
   if(det < EPSILON)
     return false;
   
@@ -136,17 +134,16 @@ __device__ bool intersectTri(Ray *ray, RayHit *bestHit, Vec3 v0, Vec3 v1, Vec3 v
   if(bestHit->uv.y() < 0.0 || bestHit->uv.x() + bestHit->uv.y() > det)
     return false;
 
-  //NOTE: Should this really be done here?
-  if(dot(edge2, qvec) > bestHit->dist)
-    return false;
-
-  bestHit->dist = dot(edge2, qvec);
   float inv_det = 1.0 / det;
-  bestHit->dist = bestHit->dist * inv_det;
-  bestHit->pos = ray->point_along_ray(bestHit->dist - 2.0); //BUG: Why -2.0? Otherwise light gets trapped inside the objects.
+  bestHit->dist = dot(edge2, qvec) * inv_det;
   bestHit->uv.e[0] *= inv_det;
   bestHit->uv.e[1] *= inv_det;
-  bestHit->normal = normalize(cross(edge1, edge2));  //TODO: Lerp vertex normals instead.
+  bestHit->pos = ray->point_along_ray(bestHit->dist);
+  bestHit->normal = normalize(cross(edge1,edge2));
+
+  //BUG: There's something funky with the normals when interpolating...
+  // bestHit->normal = normalize(bestHit->uv.x()*n1 + bestHit->uv.y() * n2 + (1.0 - bestHit->uv.x() - bestHit->uv.y()) * n0);
+
   return true;
 }
 
@@ -218,7 +215,7 @@ int serializeImageBuffer(Vec3 *ptr_img, const char *file_name, int image_width, 
 }
 
 int main(int argc, char *argv[]){
-  std::string filename = "test.obj";
+  std::string filename = "samplefile.obj";
 
   tinyobj::ObjReaderConfig reader_config;
   tinyobj::ObjReader reader;
@@ -264,13 +261,12 @@ int main(int argc, char *argv[]){
 
   Vec3 *ptr_device_normals;
   checkCudaErrors(cudaMalloc(&ptr_device_normals, normals_count * sizeof(Vec3)));
-  checkCudaErrors(cudaMemcpy(ptr_device_normals, attrib.normals.data(), vertex_count * sizeof(Vec3), cudaMemcpyHostToDevice));
+  checkCudaErrors(cudaMemcpy(ptr_device_normals, attrib.normals.data(), normals_count * sizeof(Vec3), cudaMemcpyHostToDevice));
 
   //Set default values for filename and image size.
   char* output_filename = "output.ppm";
-  
                     //w    h    spp   max_depth
-  RenderConfig config(512, 512, 1024, 2         );
+  RenderConfig config(512, 512, 150, 5         );
   Camera cam = Camera(config.img_width, config.img_height, 90.0f, 1.0f, Vec3(0,0,0));
 
   int threads_x = 16;
@@ -286,7 +282,7 @@ int main(int argc, char *argv[]){
   printf("Initializing kernels... ");
   initKernels<<<blocks, threads>>>(config.img_width, config.img_height, 1337, d_rand_state);
   printf("Initialization complete.\nStarting Rendering... ");
-  render<<<blocks, threads>>>(ptr_img, cam, d_rand_state, config, ptr_device_vertices, ptr_device_indices);
+  render<<<blocks, threads>>>(ptr_img, cam, d_rand_state, config, ptr_device_vertices, ptr_device_indices, indices_count, ptr_device_normals);
   checkCudaErrors(cudaDeviceSynchronize());
 
   printf("Render complete.\nWriting to disk... ");
