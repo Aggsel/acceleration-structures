@@ -4,8 +4,17 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <curand_kernel.h>
-#include <thrust/sort.h>
 
+#include <thrust/sort.h>
+#include <thrust/host_vector.h>
+#include <thrust/device_vector.h>
+#include <thrust/generate.h>
+#include <thrust/sort.h>
+#include <thrust/copy.h>
+#include <algorithm>
+#include <cstdlib>
+
+#include "triangle.h"
 #include "render_config.h"
 #include "vec3.h"
 #include "vec2.h"
@@ -22,7 +31,7 @@
 #define PI 3.1415926535897932385
 #define EPSILON 0.000001
 
-__global__ void render(Vec3 *output_image, Camera cam, curandState *rand, RenderConfig config, Vec3 *vertices, int *indices, int vertex_count, Vec3 *normals){
+__global__ void render(Vec3 *output_image, Camera cam, curandState *rand, RenderConfig config, Vec3 *vertices, Triangle *triangles, int vertex_count, Vec3 *normals){
   int pixel_x = threadIdx.x + blockIdx.x * blockDim.x;
   int pixel_y = threadIdx.y + blockIdx.y * blockDim.y;
   if((pixel_x >= config.img_width) || (pixel_y >= config.img_height)) return;
@@ -34,7 +43,7 @@ __global__ void render(Vec3 *output_image, Camera cam, curandState *rand, Render
   for (int i = 0; i < config.samples_per_pixel; i++){
     Vec2 uv = Vec2((pixel_x + curand_uniform(&local_rand)) / (config.img_width-1), (pixel_y+ curand_uniform(&local_rand)) / (config.img_height-1));
     Ray ray = Ray(Vec3(0,0,0), normalize(cam.lower_left_corner + uv.x()*cam.horizontal + uv.y()*cam.vertical - Vec3(0,0,0)) );
-    Vec3 out_col = color(&ray, &local_rand, config.max_bounces, vertices, indices, vertex_count, normals);
+    Vec3 out_col = color(&ray, &local_rand, config.max_bounces, vertices, triangles, vertex_count, normals);
 
     float r = clamp01(out_col.x());
     float g = clamp01(out_col.y());
@@ -63,15 +72,20 @@ __global__ void initKernels(int image_width, int image_height, unsigned long lon
   curand_init(rand_seed, pixel_index, 0, &rand[pixel_index]);
 }
 
-__device__ Vec3 color(Ray *ray, curandState *rand, int max_depth, Vec3 *vertices, int *indices, int vertex_count, Vec3 *normals) {
+__device__ Vec3 color(Ray *ray, curandState *rand, int max_depth, Vec3 *vertices, Triangle *triangles, int vertex_count, Vec3 *normals) {
   float cur_attenuation = 1.0f;
   for(int i = 0; i < max_depth; i++) {
     RayHit hit;
     bool was_hit = false;
-    for (int j = 0; j < vertex_count; j+=3){
+    for (int j = 0; j < vertex_count/3; j++){
       RayHit tempHit;
       
-      if (!intersectTri(ray, &tempHit, vertices[indices[j]], vertices[indices[j+1]], vertices[indices[j+2]], normals[indices[j]], normals[indices[j+1]], normals[indices[j+2]]))
+      if (!intersectTri(ray, &tempHit,  vertices[triangles[j].v0_index],
+                                        vertices[triangles[j].v1_index],
+                                        vertices[triangles[j].v2_index],
+                                        normals[triangles[j].v0_index],
+                                        normals[triangles[j].v1_index],
+                                        normals[triangles[j].v2_index]))
         continue; //Did not hit triangle.
       
       if(tempHit.dist > hit.dist)
@@ -244,16 +258,24 @@ int main(int argc, char *argv[]){
 
   //The Obj reader does not store vertex indices in contiguous memory.
   //Copy the indices into a block of memory on the host device.
-  int *ptr_host_indices = (int*)malloc(sizeof(int) * indices_count);
-  for (int i = 0; i < indices_count; i++){
-    ptr_host_indices[i] = shapes[0].mesh.indices[i].vertex_index;
+  Triangle *ptr_host_triangles = (Triangle*)malloc(sizeof(Triangle) * indices_count/3);
+  for (int i = 0; i < indices_count; i+=3){
+    Triangle tempTri = Triangle();
+    int v0 = shapes[0].mesh.indices[i  ].vertex_index;
+    int v1 = shapes[0].mesh.indices[i+1].vertex_index;
+    int v2 = shapes[0].mesh.indices[i+2].vertex_index;
+    tempTri.v0_index = v0;
+    tempTri.v1_index = v1;
+    tempTri.v2_index = v2;
+    tempTri.morton_code = mortonCode(Vec3(attrib.vertices[v0],attrib.vertices[v1],attrib.vertices[v2]));
+    ptr_host_triangles[i/3] = tempTri;
   }
 
   //Allocate and memcpy index, vertex and normal buffers from host to device.
-  int *ptr_device_indices;
-  checkCudaErrors(cudaMalloc((void**)&ptr_device_indices, indices_count * sizeof(int)));
-  checkCudaErrors(cudaMemcpy(ptr_device_indices, ptr_host_indices, indices_count * sizeof(int), cudaMemcpyHostToDevice));
-  free(ptr_host_indices);
+  Triangle *ptr_device_triangles;
+  checkCudaErrors(cudaMalloc((void**)&ptr_device_triangles, indices_count/3 * sizeof(Triangle)));
+  checkCudaErrors(cudaMemcpy(ptr_device_triangles, ptr_host_triangles, indices_count/3 * sizeof(Triangle), cudaMemcpyHostToDevice));
+  // free(ptr_host_triangles);
   
   Vec3 *ptr_device_vertices;
   checkCudaErrors(cudaMalloc(&ptr_device_vertices, vertex_count * sizeof(Vec3)));
@@ -276,22 +298,38 @@ int main(int argc, char *argv[]){
 
   curandState *d_rand_state;
   Vec3 *ptr_img;
-  checkCudaErrors(cudaMallocManaged(&d_rand_state, config.img_width * config.img_height*sizeof(curandState)));
-  checkCudaErrors(cudaMallocManaged(&ptr_img, config.img_width * config.img_height*sizeof(Vec3)));
+  checkCudaErrors(cudaMalloc(&d_rand_state, config.img_width * config.img_height*sizeof(curandState)));
+  checkCudaErrors(cudaMallocManaged(&ptr_img, config.img_width * config.img_height*sizeof(Vec3)));  //BUG: Segmentation Fault when using unmanaged malloc.
 
   printf("Initializing kernels... ");
   initKernels<<<blocks, threads>>>(config.img_width, config.img_height, 1337, d_rand_state);
   printf("Initialization complete.\nStarting Rendering... ");
-  render<<<blocks, threads>>>(ptr_img, cam, d_rand_state, config, ptr_device_vertices, ptr_device_indices, indices_count, ptr_device_normals);
+  render<<<blocks, threads>>>(ptr_img, cam, d_rand_state, config, ptr_device_vertices, ptr_device_triangles, indices_count, ptr_device_normals);
   checkCudaErrors(cudaDeviceSynchronize());
 
   printf("Render complete.\nWriting to disk... ");
   serializeImageBuffer(ptr_img, output_filename, config.img_width, config.img_height);
   printf("Saved to disk.\n");
 
+
+  std::cout << "Pre sort:" << std::endl;
+  for (int i = 0; i < indices_count/3; i++){
+    std::cout << ptr_host_triangles[i].morton_code << std::endl;
+  }
+  
+  thrust::sort(thrust::device, ptr_device_triangles, ptr_device_triangles+indices_count/3);  
+  
+  checkCudaErrors(cudaMemcpy(ptr_host_triangles, ptr_device_triangles, indices_count/3 * sizeof(Triangle), cudaMemcpyDeviceToHost));
+  std::cout << "Post sort:" << std::endl;
+  for (int i = 0; i < indices_count/3; i++){
+    std::cout << ptr_host_triangles[i].morton_code << std::endl;
+  }
+
+  free(ptr_host_triangles);
+
   checkCudaErrors(cudaFree(ptr_img));
   checkCudaErrors(cudaFree(d_rand_state));
-  checkCudaErrors(cudaFree(ptr_device_indices));
+  checkCudaErrors(cudaFree(ptr_device_triangles));
   checkCudaErrors(cudaFree(ptr_device_vertices));
   checkCudaErrors(cudaFree(ptr_device_normals));
   return 0;

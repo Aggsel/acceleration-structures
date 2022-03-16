@@ -51,6 +51,13 @@
         "sstream": "cpp",
         "string": "cpp",
         "xtree": "cpp",
-        "__config": "cpp"
+        "__config": "cpp",
+        "chrono": "cpp",
+        "atomic": "cpp",
+        "mutex": "cpp",
+        "ratio": "cpp",
+        "string_view": "cpp",
+        "xthread": "cpp",
+        "thread": "cpp"
     }
 }

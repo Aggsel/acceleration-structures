@@ -12,7 +12,7 @@
             },
             "dependsOrder": "sequence",
             "dependsOn": [
-                "mkdir",
+                // "mkdir",
                 "compile",
                 // "run",
                 // "openImage"
