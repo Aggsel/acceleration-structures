@@ -1,5 +1,6 @@
 #pragma once
 
+__global__ void constructHLBVH(Triangle *triangles, Node* internalNodes, int primitive_count);
 __global__ void render(Vec3 *image, int image_width, int image_height, Vec3 horizontal, Vec3 vertical, Vec3 lower_left_corner, curandState *rand, RenderConfig config, Vec3 *vertices, Triangle *triangles, int vertex_count, Vec3 *normals);
 __global__ void init_kernels(int image_width, int image_height, curandState *rand);
 __device__ Vec3 color(Ray *ray, curandState *rand, int max_depth, Vec3 *vertices, Triangle *triangles, int vertex_count, Vec3 *normals);

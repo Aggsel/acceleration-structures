@@ -2,8 +2,8 @@
 #include "vec2.h"
 
 class Vec3{
-  float e[3];
   public:
+    float e[3];
     __host__ __device__ Vec3();
     __host__ __device__ Vec3(float e0, float e1, float e2);
     __host__ __device__ Vec3(float e0);

@@ -58,6 +58,12 @@
         "ratio": "cpp",
         "string_view": "cpp",
         "xthread": "cpp",
-        "thread": "cpp"
+        "thread": "cpp",
+        "condition_variable": "cpp",
+        "ctime": "cpp",
+        "future": "cpp",
+        "iomanip": "cpp",
+        "xlocmon": "cpp",
+        "xloctime": "cpp"
     }
 }
