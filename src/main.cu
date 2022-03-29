@@ -3,9 +3,8 @@
 #define EPSILON 0.000001
 
 #include <iostream>
-#include <curand_kernel.h>
+#include <curand_kernel.h>  //CUDA random
 #include <thrust/sort.h>
-#include <limits.h>
 
 #include "node.h"
 #include "triangle.h"
@@ -18,172 +17,10 @@
 #include "main.h"
 #include "math_util.h"
 
+#include "lbvh.cuh"
+
 #include "cuda_helpers/helper_cuda.h"      //checkCudaErrors
 #include "tiny_obj_loader.h"
-
-__device__ int2 determineRange(Triangle *sorted_morton_codes, int total_primitives, int node_index){
-
-  if(node_index == 0){
-    int2 range;
-    range.x = 0;
-    range.y = total_primitives-1;
-    return range;
-  }
-
-  //Determine direction (d).
-  int current_code = sorted_morton_codes[node_index].morton_code;
-
-  //BUG: Properly handle out of bounds exceptions. (branchless? :O)
-
-  int prev_code = sorted_morton_codes[node_index-1].morton_code;
-  int next_code = sorted_morton_codes[node_index+1].morton_code;
-
-  if(prev_code == current_code)
-    prev_code = prev_code ^ node_index-1;
-  if(next_code == current_code)
-    next_code = next_code ^ node_index-1;
-
-  int next_delta = __clz(current_code ^ next_code);
-  int prev_delta = __clz(current_code ^ prev_code);
-  int d = next_delta - prev_delta < 0 ? -1 : 1;
-
-  //Compute upper bound for the length of the range.
-  // int lmax = 2;
-  // int delta_min = __clz(current_code ^ sorted_morton_codes[node_index-d].morton_code);
-  // while(__clz(current_code ^ sorted_morton_codes[node_index + lmax * d].morton_code) > delta_min){
-  //   lmax *= 2;
-  // }
-
-  int lmax = 2;
-  int delta_min = next_delta < prev_delta ? next_delta : prev_delta;
-  int delta = -1;
-  int i = node_index + d * lmax;
-  if(0 <= i && i < total_primitives){
-      delta = __clz(node_index ^ sorted_morton_codes[i].morton_code);
-  }
-  while(delta > delta_min){
-      lmax = lmax << 1;
-      i = node_index + d * lmax;
-      delta = -1;
-      if(0 <= i && i < total_primitives){
-          delta = __clz(node_index ^ sorted_morton_codes[i].morton_code);
-      }
-  }
-
-  //Binary search, other end.
-  // int l = 0;
-  // int step = lmax;
-  
-  // do{
-  //   step = (step + 1) >> 1; // exponential decrease
-  //   int comparing_index = node_index + (l + step) * d;
-  //   if(__clz(current_code ^ sorted_morton_codes[comparing_index].morton_code) > delta_min)
-  //     l = l + step;
-  // }while (step > 1);
-  // int j = node_index + l * d;
-  int l = 0;
-  int t = lmax >> 1;
-  while(t > 0){
-      i = node_index + (l + t) * d;
-      delta = -1;
-      if(0 <= i && i < total_primitives){
-          delta = __clz(current_code ^ sorted_morton_codes[i].morton_code);
-      }
-      if(delta > delta_min){
-          l += t;
-      }
-      t >>= 1;
-  }
-  unsigned int j = node_index + l * d;
-
-  int2 min_max;
-  min_max.x = min(node_index, j);
-  min_max.y = max(node_index, j);
-  return min_max;
-}
-
-__device__ int findSplit(Triangle *sorted_morton_codes, int first, int last){
-  int first_morton = sorted_morton_codes[first].morton_code;
-  int last_morton = sorted_morton_codes[last].morton_code;
-
-  if(first_morton == last_morton)
-    return (first + last) >> 1;
-
-  //count leading zeros
-  int common_prefix = __clz(first_morton ^ last_morton);
-
-  // Use binary search to find where the next bit differs.
-  // Specifically, we are looking for the highest object that
-  // shares more than common_prefix bits with the first one.
-  int split = first;
-  int step = last - first;
-
-  do{
-    step = (step + 1) >> 1;
-    int new_split = split + step;
-
-    if (new_split < last){
-      int split_morton = sorted_morton_codes[new_split].morton_code;
-      int split_prefix = __clz(first_morton ^ split_morton);
-      if (split_prefix > common_prefix)
-        split = new_split;
-    }
-  }while (step > 1);
-  
-  return split;
-}
-
-__global__ void constructHLBVH(Triangle *triangles, Node* internalNodes, int primitive_count){
-  int node_index = blockIdx.x *blockDim.x + threadIdx.x;
-  if(node_index >= primitive_count)
-    return;
-
-  // Find out which range of objects the node corresponds to.
-  // (This is where the magic happens!)
-
-  //binary search morton codes.
-  int2 range = determineRange(triangles, primitive_count, node_index);
-  int first = range.x;
-  int last = range.y;
-
-  // Determine where to split the range.
-  int split = findSplit(triangles, first, last);
-  //BUG: Split is sometimes a really large value.
-
-  printf("Node: %i, \tMorton: %i, \tMin: %i, \tMax: %i, \tSplit: %i\n", node_index, triangles[node_index].morton_code, first, last, split);
-  // printf("Node: %i, \tMin: %i, \tMax: %i, \tSplit: %i\n", node_index, first, last, split);
-
-  if(split >= primitive_count)
-    return;
-
-  // Select left_child.
-  Node* left_child = &internalNodes[split];
-  if (split == first){
-    left_child->primitive = &triangles[split];
-    left_child->isLeaf = true;
-  }
-  else{
-    left_child = &internalNodes[split];
-  }
-
-  // Select rightChild.
-  Node* right_child = &internalNodes[split + 1];
-  if (split + 1 == last){
-    right_child->primitive = &triangles[split];
-    right_child->isLeaf = true;
-  }
-  else{
-    right_child = &internalNodes[split + 1];
-  }
-
-  // Record parent-child relationships.
-  internalNodes[node_index].leftChild = left_child;
-  internalNodes[node_index].rightChild = right_child;
-  left_child->parent = &internalNodes[node_index];
-  right_child->parent = &internalNodes[node_index];
-
-  // Node 0 is always the root of the tree, the pointer supplied (Node* internalNodes) will be the address of the root.
-}
 
 __global__ void render(Vec3 *output_image, Camera cam, curandState *rand, RenderConfig config, Vec3 *vertices, Triangle *triangles, int vertex_count, Vec3 *normals){
   int pixel_x = threadIdx.x + blockIdx.x * blockDim.x;
@@ -220,7 +57,8 @@ __global__ void render(Vec3 *output_image, Camera cam, curandState *rand, Render
 __global__ void initKernels(int image_width, int image_height, unsigned long long rand_seed, curandState *rand){
   int pixel_x = threadIdx.x + blockIdx.x * blockDim.x;
   int pixel_y = threadIdx.y + blockIdx.y * blockDim.y;
-  if((pixel_x >= image_width) || (pixel_y >= image_height)) return;
+  if((pixel_x >= image_width) || (pixel_y >= image_height))
+    return;
   int pixel_index = pixel_y*image_width + pixel_x;
 
   curand_init(rand_seed, pixel_index, 0, &rand[pixel_index]);
@@ -231,7 +69,7 @@ __device__ Vec3 color(Ray *ray, curandState *rand, int max_depth, Vec3 *vertices
   for(int i = 0; i < max_depth; i++) {
     RayHit hit;
     bool was_hit = false;
-    for (int j = 0; j < vertex_count/3; j++){
+    for (int j = 0; j < vertex_count/3; j++){ //TODO: Traverse acceleration structure.
       RayHit tempHit;
 
       if (!intersectTri(ray, &tempHit,  vertices[triangles[j].v0_index],
@@ -461,11 +299,11 @@ int main(int argc, char *argv[]){
 
     Vec3 centroid = (v0 + v1 + v2) / 3;
 
-    printf("Centroid: (%f, %f, %f)\n", centroid.x(), centroid.y(), centroid.z());
+    printf("Centroid: (%f, %f, %f)\n", centroid.x(), centroid.y(), centroid.z());           // @debug
     centroid.e[0] = (centroid.x() - min_bounds.x()) / (max_bounds.x() - min_bounds.x());
     centroid.e[1] = (centroid.y() - min_bounds.y()) / (max_bounds.y() - min_bounds.y());
     centroid.e[2] = (centroid.z() - min_bounds.z()) / (max_bounds.z() - min_bounds.z());
-    printf("Centroid: (%f, %f, %f)\n\n", centroid.x(), centroid.y(), centroid.z());
+    printf("Centroid: (%f, %f, %f)\n\n", centroid.x(), centroid.y(), centroid.z());         // @debug
     tempTri.morton_code = mortonCode(centroid);
     ptr_host_triangles[i/3] = tempTri;
   }
@@ -497,16 +335,14 @@ int main(int argc, char *argv[]){
   // ---------- SORT -----------
   // Sorts the triangle buffer based on the computed morton codes. (using < overloading from the triangle struct).
   thrust::sort(thrust::device, ptr_device_triangles, ptr_device_triangles+indices_count/3);    
-  checkCudaErrors(cudaMemcpy(ptr_host_triangles, ptr_device_triangles, indices_count/3 * sizeof(Triangle), cudaMemcpyDeviceToHost));
 
-  // ---------- CONSTRUCT -----------
+  // ---------- CONSTRUCT Karras 2012 -----------
   int primitive_count = indices_count/3;
-  Node* ptr_device_internal_nodes;
-  checkCudaErrors(cudaMalloc(&ptr_device_internal_nodes, (primitive_count-1)*sizeof(Node)));
+  BVH bvh = BVH(ptr_device_triangles, primitive_count);
+  bvh.construct();
   printf("Primitives: %i, Thread blocks: %i, Threads per block: %i \n", primitive_count, primitive_count/64+1, 64);
-  // <<<x,y>>> Launches x thread blocks with y threads per block.
-  constructHLBVH<<<primitive_count/64+1,64>>>(ptr_device_triangles, ptr_device_internal_nodes, primitive_count);
-  checkCudaErrors(cudaDeviceSynchronize());
+  //TODO: Verify tree structure.
+
 
   // ---------- RENDER -------------
   int threads_x = 8;
@@ -523,11 +359,11 @@ int main(int argc, char *argv[]){
   checkCudaErrors(cudaDeviceSynchronize());
 
   printf("Render complete.\nWriting to disk... ");
+  //BUG: ptr_img is a device pointer, it is not safe to access from host.
   serializeImageBuffer(ptr_img, output_filename, config.img_width, config.img_height);
   printf("Saved to disk.\n");
 
   free(ptr_host_triangles);
-  checkCudaErrors(cudaFree(ptr_device_internal_nodes));
   checkCudaErrors(cudaFree(ptr_img));
   checkCudaErrors(cudaFree(d_rand_state));
   checkCudaErrors(cudaFree(ptr_device_triangles));
