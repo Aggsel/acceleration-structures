@@ -3,12 +3,11 @@
 #include "aabb.h"
 
 struct Node{
-    Node* leftChild;
-    Node* rightChild;
+    Node* left_child;
+    Node* right_child;
     Node* parent;
 
     AABB aabb;
 
-    bool isLeaf;
     Triangle* primitive;
 };

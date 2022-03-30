@@ -307,6 +307,8 @@ int main(int argc, char *argv[]){
     centroid.e[2] = (centroid.z() - min_bounds.z()) / (max_bounds.z() - min_bounds.z());
     // printf("Centroid: (%f, %f, %f)\n\n", centroid.x(), centroid.y(), centroid.z());         // @debug
     tempTri.morton_code = mortonCode(centroid);
+    tempTri.aabb.min_bounds = min(v2, min(v0, v1)); //TODO: This should not happen here? This should be in lbvh::calculateAABB()
+    tempTri.aabb.max_bounds = max(v2, max(v0, v1));
     ptr_host_triangles[i/3] = tempTri;
   }
 
@@ -341,8 +343,8 @@ int main(int argc, char *argv[]){
 
   // ----------- CONSTRUCT Karras 2012 -----------
   int primitive_count = indices_count/3;
-  BVH bvh = BVH(ptr_device_triangles, primitive_count);
-  bvh.construct();
+  BVH bvh = BVH(ptr_device_triangles, primitive_count, ptr_device_vertices, vertex_count);
+  Node* ptr_device_tree = bvh.construct();
   printf("Primitives: %i, Thread blocks: %i, Threads per block: %i \n", primitive_count, primitive_count/64+1, 64);
   //TODO: Verify tree structure.
 
