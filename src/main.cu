@@ -6,18 +6,19 @@
 #include <curand_kernel.h>  //CUDA random
 #include <thrust/sort.h>
 
+#include "aabb.h"
 #include "node.h"
 #include "triangle.h"
-#include "render_config.h"
 #include "vec3.h"
 #include "vec2.h"
-#include "ray.h"
-#include "hit.h"
-#include "camera.h"
+#include "raytracer/render_config.h"
+#include "raytracer/ray.h"
+#include "raytracer/hit.h"
+#include "raytracer/camera.h"
 #include "main.h"
 #include "math_util.h"
 
-#include "lbvh.cuh"
+#include "lbvh.cu"
 
 #include "cuda_helpers/helper_cuda.h"      //checkCudaErrors
 #include "tiny_obj_loader.h"
@@ -75,9 +76,9 @@ __device__ Vec3 color(Ray *ray, curandState *rand, int max_depth, Vec3 *vertices
       if (!intersectTri(ray, &tempHit,  vertices[triangles[j].v0_index],
                                         vertices[triangles[j].v1_index],
                                         vertices[triangles[j].v2_index],
-                                        normals[triangles[j].v0_index],
-                                        normals[triangles[j].v1_index],
-                                        normals[triangles[j].v2_index]))
+                                        normals [triangles[j].v0_index],
+                                        normals [triangles[j].v1_index],
+                                        normals [triangles[j].v2_index]))
         continue; //Did not hit triangle.
       
       if(tempHit.dist > hit.dist)
@@ -198,6 +199,7 @@ __device__ __host__ int mortonCode(Vec3 v){
   return xx | yy | zz;
 }
 
+// https://rosettacode.org/wiki/Bitmap/Write_a_PPM_file#C
 int serializeImageBuffer(Vec3 *ptr_img, const char *file_name, int image_width, int image_height){
   FILE *fp = fopen(file_name, "w");
   fprintf(fp, "P3\n%d %d\n255\n", image_width, image_height);
@@ -266,8 +268,8 @@ int main(int argc, char *argv[]){
   max_bounds = Vec3(302.590363, 546.458801, -250.774368);
   printf("Min Bounds: (%f, %f, %f)\n", min_bounds.x(), min_bounds.y(), min_bounds.z());
   printf("Max Bounds: (%f, %f, %f)\n", max_bounds.x(), max_bounds.y(), max_bounds.z());
-  Vec3 bounds = abs(min_bounds) + abs(max_bounds);
-  printf("Bounds: (%f, %f, %f)\n\n", bounds.x(), bounds.y(), bounds.z());
+  // Vec3 bounds = max_bounds - min_bounds;                                                   // @debug
+  // printf("Bounds: (%f, %f, %f)\n\n", bounds.x(), bounds.y(), bounds.z());                  // @debug
 
   //The Obj reader does not store vertex indices in contiguous memory.
   //Copy the indices into a block of memory on the host device.
@@ -299,11 +301,11 @@ int main(int argc, char *argv[]){
 
     Vec3 centroid = (v0 + v1 + v2) / 3;
 
-    printf("Centroid: (%f, %f, %f)\n", centroid.x(), centroid.y(), centroid.z());           // @debug
+    // printf("Centroid: (%f, %f, %f)\n", centroid.x(), centroid.y(), centroid.z());           // @debug
     centroid.e[0] = (centroid.x() - min_bounds.x()) / (max_bounds.x() - min_bounds.x());
     centroid.e[1] = (centroid.y() - min_bounds.y()) / (max_bounds.y() - min_bounds.y());
     centroid.e[2] = (centroid.z() - min_bounds.z()) / (max_bounds.z() - min_bounds.z());
-    printf("Centroid: (%f, %f, %f)\n\n", centroid.x(), centroid.y(), centroid.z());         // @debug
+    // printf("Centroid: (%f, %f, %f)\n\n", centroid.x(), centroid.y(), centroid.z());         // @debug
     tempTri.morton_code = mortonCode(centroid);
     ptr_host_triangles[i/3] = tempTri;
   }
@@ -328,15 +330,16 @@ int main(int argc, char *argv[]){
   Camera cam = Camera(config.img_width, config.img_height, 90.0f, 1.0f, Vec3(0,0,0));
 
   curandState *d_rand_state;
-  Vec3 *ptr_img;
+  Vec3 *ptr_device_img;
   checkCudaErrors(cudaMalloc(&d_rand_state, config.img_width * config.img_height*sizeof(curandState)));
-  checkCudaErrors(cudaMallocManaged(&ptr_img, config.img_width * config.img_height*sizeof(Vec3)));  //BUG: Segmentation Fault when using unmanaged malloc.
+  checkCudaErrors(cudaMalloc(&ptr_device_img, config.img_width * config.img_height*sizeof(Vec3)));
 
-  // ---------- SORT -----------
+  // ----------- SORT -----------
   // Sorts the triangle buffer based on the computed morton codes. (using < overloading from the triangle struct).
-  thrust::sort(thrust::device, ptr_device_triangles, ptr_device_triangles+indices_count/3);    
+  thrust::sort(thrust::device, ptr_device_triangles, ptr_device_triangles+indices_count/3);
 
-  // ---------- CONSTRUCT Karras 2012 -----------
+
+  // ----------- CONSTRUCT Karras 2012 -----------
   int primitive_count = indices_count/3;
   BVH bvh = BVH(ptr_device_triangles, primitive_count);
   bvh.construct();
@@ -344,7 +347,7 @@ int main(int argc, char *argv[]){
   //TODO: Verify tree structure.
 
 
-  // ---------- RENDER -------------
+  // ----------- RENDER -----------
   int threads_x = 8;
   int threads_y = 8;
   dim3 threads(threads_x,threads_y);
@@ -353,18 +356,21 @@ int main(int argc, char *argv[]){
   printf("Initializing kernels... ");
   initKernels<<<tracingBlocks, threads>>>(config.img_width, config.img_height, 1337, d_rand_state);
   checkCudaErrors(cudaDeviceSynchronize());
-  
+
   printf("Initialization complete.\nStarting Rendering... ");
-  render<<<tracingBlocks, threads>>>(ptr_img, cam, d_rand_state, config, ptr_device_vertices, ptr_device_triangles, indices_count, ptr_device_normals);
+  render<<<tracingBlocks, threads>>>(ptr_device_img, cam, d_rand_state, config, ptr_device_vertices, ptr_device_triangles, indices_count, ptr_device_normals);
   checkCudaErrors(cudaDeviceSynchronize());
 
+  //Copy framebuffer to host and save to disk.
+  Vec3 *ptr_host_img = (Vec3*)malloc(sizeof(Vec3) * config.img_height * config.img_width);
+  checkCudaErrors(cudaMemcpy(ptr_host_img, ptr_device_img, sizeof(Vec3) * config.img_height * config.img_width, cudaMemcpyDeviceToHost));
   printf("Render complete.\nWriting to disk... ");
-  //BUG: ptr_img is a device pointer, it is not safe to access from host.
-  serializeImageBuffer(ptr_img, output_filename, config.img_width, config.img_height);
+  serializeImageBuffer(ptr_host_img, output_filename, config.img_width, config.img_height);
   printf("Saved to disk.\n");
 
   free(ptr_host_triangles);
-  checkCudaErrors(cudaFree(ptr_img));
+  free(ptr_host_img);
+  checkCudaErrors(cudaFree(ptr_device_img));
   checkCudaErrors(cudaFree(d_rand_state));
   checkCudaErrors(cudaFree(ptr_device_triangles));
   checkCudaErrors(cudaFree(ptr_device_vertices));

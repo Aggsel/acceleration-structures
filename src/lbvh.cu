@@ -4,7 +4,10 @@
 #include "node.h"
 #include "cuda_helpers/helper_cuda.h"
 
-__global__ void constructLBVH(Triangle *triangles, Node* internalNodes, int primitive_count);
+__global__ void constructLBVH(Triangle *triangles, Node* internal_nodes, Node* leaf_nodes, int primitive_count);
+__device__ int2 determineRange(Triangle *sorted_morton_codes, int total_primitives, int node_index);
+__device__ int findSplit(Triangle *sorted_morton_codes, int first, int last);
+__global__ void calculateAABB(Node* internal_nodes, Triangle* leaf_nodes, int leaf_count, Vec3* internal_nodes_aabb);
 
 __device__ int2 determineRange(Triangle *sorted_morton_codes, int total_primitives, int node_index){
   //Time complexity of the algorithm is proportional to the number of keys covered by the nodes.
@@ -32,7 +35,8 @@ __device__ int2 determineRange(Triangle *sorted_morton_codes, int total_primitiv
   int d = next_delta - prev_delta < 0 ? -1 : 1;
 
   //Compute upper bound for the length of the range.
-  //TODO: When searching for lmax on
+  //TODO: __Note from Karras 2012__:
+  //      When searching for lmax on
   //      lines 5–8, we have found that it is beneficial to start from a
   //      larger number, e.g. 128, and multiply the value by 4 instead
   //      of 2 after each iteration to reduce the total amount of work.
@@ -75,6 +79,7 @@ __device__ int2 determineRange(Triangle *sorted_morton_codes, int total_primitiv
   return min_max;
 }
 
+//From https://developer.nvidia.com/blog/thinking-parallel-part-iii-tree-construction-gpu/
 __device__ int findSplit(Triangle *sorted_morton_codes, int first, int last){
   int first_morton = sorted_morton_codes[first].morton_code;
   int last_morton = sorted_morton_codes[last].morton_code;
@@ -106,7 +111,7 @@ __device__ int findSplit(Triangle *sorted_morton_codes, int first, int last){
   return split;
 }
 
-__global__ void constructLBVH(Triangle *triangles, Node* internalNodes, int primitive_count){
+__global__ void constructLBVH(Triangle *triangles, Node* internal_nodes, Node* leaf_nodes, int primitive_count){
   int node_index = blockIdx.x *blockDim.x + threadIdx.x;
   if(node_index >= primitive_count)
     return;
@@ -125,37 +130,81 @@ __global__ void constructLBVH(Triangle *triangles, Node* internalNodes, int prim
 //   printf("Node: %i, \tMorton: %i, \tMin: %i, \tMax: %i, \tSplit: %i\n", node_index, triangles[node_index].morton_code, first, last, split); // @debug
 
   // Select left_child.
-  Node* left_child = &internalNodes[split];
+  Node* left_child = &internal_nodes[split];
   if (split == first){
     left_child->primitive = &triangles[split];
     left_child->isLeaf = true;
   }
   else{
-    left_child = &internalNodes[split];
+    left_child = &internal_nodes[split];
   }
 
   // Select rightChild.
-  Node* right_child = &internalNodes[split + 1];
+  Node* right_child = &internal_nodes[split + 1];
   if (split + 1 == last){
     right_child->primitive = &triangles[split];
     right_child->isLeaf = true;
   }
   else{
-    right_child = &internalNodes[split + 1];
+    right_child = &internal_nodes[split + 1];
   }
 
   // Record parent-child relationships.
-  internalNodes[node_index].leftChild = left_child;
-  internalNodes[node_index].rightChild = right_child;
-  left_child->parent = &internalNodes[node_index];
-  right_child->parent = &internalNodes[node_index];
+  internal_nodes[node_index].leftChild = left_child;
+  internal_nodes[node_index].rightChild = right_child;
+  left_child->parent = &internal_nodes[node_index];
+  right_child->parent = &internal_nodes[node_index];
 
   // Node 0 is always the root of the tree, the pointer supplied (Node* internalNodes) will be the address of the root.
 }
 
-__host__ class BVH{
-    Node* ptr_device_internal_nodes;
+// __global__ void calculateAABB(Node* internal_nodes, Node* leaf_nodes, int leaf_count, AABB* internal_nodes_aabb){
+//     int leaf_index = blockIdx.x * blockDim.x + threadIdx.x;
+//     if(leaf_index >= leaf_count)
+//         return;
     
+//     //1. From leaf index, calculate bound of leaf.
+//     //2. Fetch address of parent node and join AABB.
+//     //3. Atomically increment global counter, if thread is first, return.
+//     //4. Otherwise repeat 2-4 until root.
+
+//     int v0 = leaf_nodes[leaf_index].primitive->v0_index;
+//     int v1 = leaf_nodes[leaf_index].primitive->v1_index;
+//     int v2 = leaf_nodes[leaf_index].primitive->v2_index;
+
+//     Vec3 min_bounds = min(min(vert_buff[v0], vert_buff[v1]), vert_buff[v2]);
+//     Vec3 max_bounds = max(max(vert_buff[v0], vert_buff[v1]), vert_buff[v2]);
+//     AABB prev_aabb;
+//     prev_aabb.min_bounds = min_bounds;
+//     prev_aabb.max_bounds = max_bounds;
+
+//     while(true){
+//       if(parent_index == null)
+//         return; //Root reached, return.
+
+//       internal_nodes[parent_index].aabb.join(prev_aabb);
+//       atomicAdd(counter[parent_index], 1);
+//       //BUG: Race condition???
+//       if(counter[parent_index]<2)
+//         return;
+//       prev_aabb = internal_nodes_aabb[parent_index];
+//     }
+
+//     //TODO: Calculate AABB for each node. 
+//     //      1. Traverse the tree from the nodes, performing a union of previously visited nodes and the nurrent nodes AABB.
+//     //      2. Using atomic counter intructions, increment the counter for each node visited.
+//     //         Since we've constructed a binary tree, a maximum of two branches will ever reach each node.
+//     //      3. If the current thread is first, perform union and terminate.
+    
+//     //  Relevant resources:
+//     //  https://docs.nvidia.com/cuda/cuda-c-programming-guide/index.html#atomic-functions
+//     //  https://developer.nvidia.com/blog/thinking-parallel-part-iii-tree-construction-gpu/
+// }
+
+class BVH{
+    Node* ptr_device_internal_nodes;
+    Node* ptr_device_leaf_nodes;
+
     Triangle* ptr_device_triangles;
     int triangle_count;
 
@@ -166,23 +215,21 @@ __host__ class BVH{
         this->ptr_device_triangles = ptr_device_triangles;
         this->triangle_count = triangle_count;
         checkCudaErrors(cudaMalloc(&ptr_device_internal_nodes, (triangle_count-1)*sizeof(Node)));
+        checkCudaErrors(cudaMalloc(&ptr_device_leaf_nodes, (triangle_count)*sizeof(Node)));
     }
 
     ~BVH(){
         checkCudaErrors(cudaFree(ptr_device_internal_nodes));
+        checkCudaErrors(cudaFree(ptr_device_leaf_nodes));
     }
 
     __host__ void construct(){
         //TODO: Move morton code generation, scene bounding box calculation etc to this function.
         // <<<x,y>>> Launches x thread blocks with y threads per block.
-        constructLBVH<<<triangle_count/64+1,64>>>(ptr_device_triangles, ptr_device_internal_nodes, triangle_count);
+        constructLBVH<<<triangle_count/64+1,64>>>(ptr_device_triangles, ptr_device_internal_nodes, ptr_device_leaf_nodes, triangle_count);
         checkCudaErrors(cudaDeviceSynchronize());
 
-        //TODO: Calculate AABB for each node. 
-        //      1. Traverse the tree from the nodes, performing a union of previously visited nodes and the nurrent nodes AABB.
-        //      2. Using atomic counter intructions, increment the counter for each node visited.
-        //         Since we've constructed a binary tree, a maximum of two branches will ever reach each node.
-        //      3. If the current thread is first, perform union and terminate.
-        // calculateBounds<<<primitive_count/64+1,64>>>();
+        // calculateAABB<<<triangle_count/64+1,64>>>(ptr_device_internal_nodes, ptr_device_triangles, triangle_count, ptr_device_internal_nodes_aabb);
+        // checkCudaErrors(cudaDeviceSynchronize());
     }
 };
