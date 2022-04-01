@@ -250,7 +250,8 @@ int main(int argc, char *argv[]){
   printf("# normals         = %d\n\n", normals_count);
 
 
-  //Calculate scene bounding box.
+  //Calculate scene bounding box. This is not strictly required if we make sure to resolve duplicate codes.
+  //Although it likely will lead to better quality structure.
   Vec3 min_bounds = Vec3( 10000000.0, 10000000.0,   10000000.0);
   Vec3 max_bounds = Vec3(-10000000.0,-10000000.0,  -10000000.0);
 
@@ -263,13 +264,18 @@ int main(int argc, char *argv[]){
     max_bounds.e[1] = max(max_bounds.y(), attrib.vertices[i+1]);
     max_bounds.e[2] = max(max_bounds.z(), attrib.vertices[i+2]);
   }
+  printf("Calculated Min Bounds: (%f, %f, %f)\n", min_bounds.x(), min_bounds.y(), min_bounds.z());
+  printf("Calculated Max Bounds: (%f, %f, %f)\n", max_bounds.x(), max_bounds.y(), max_bounds.z());
+  
   //BUG: Calculate these bounds, for some reason this does not work.
+  printf("Overwriting calculated bounds...\n");
   min_bounds = Vec3(-245.425491, -99.999916, -1256.244751); //Only relevant for test2.obj
   max_bounds = Vec3(302.590363, 546.458801, -250.774368);
+  // min_bounds = Vec3(-304.081207, -134.087631, -1420.60144); // For some reason, these are the vertex bounds in the test2.obj file.
+  // max_bounds = Vec3(313.978699, 563.428711, -219.069687);
+
   printf("Min Bounds: (%f, %f, %f)\n", min_bounds.x(), min_bounds.y(), min_bounds.z());
   printf("Max Bounds: (%f, %f, %f)\n", max_bounds.x(), max_bounds.y(), max_bounds.z());
-  // Vec3 bounds = max_bounds - min_bounds;                                                   // @debug
-  // printf("Bounds: (%f, %f, %f)\n\n", bounds.x(), bounds.y(), bounds.z());                  // @debug
 
   //The Obj reader does not store vertex indices in contiguous memory.
   //Copy the indices into a block of memory on the host device.

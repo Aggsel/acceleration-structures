@@ -6,6 +6,7 @@ struct Node{
     Node* left_child;
     Node* right_child;
     Node* parent;
+    bool isLeaf;
 
     AABB aabb;
 
