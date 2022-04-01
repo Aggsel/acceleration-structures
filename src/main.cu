@@ -187,7 +187,7 @@ __device__ __host__ inline unsigned int expandBits(unsigned int v){
 }
 
 //Expects an input Vec3(0..1, 0..1, 0..1)
-__device__ __host__ int mortonCode(Vec3 v){
+__device__ __host__ unsigned int mortonCode(Vec3 v){
   //Clamp coordinates to 10 bits.
   float x = min(max(v.x() * 1024.0f, 0.0f), 1023.0f);
   float y = min(max(v.y() * 1024.0f, 0.0f), 1023.0f);
@@ -222,7 +222,12 @@ int serializeImageBuffer(Vec3 *ptr_img, const char *file_name, int image_width, 
 }
 
 int main(int argc, char *argv[]){
-  std::string filename = "sample_models/test2.obj";
+  std::string filename = "sample_models/large_210.obj";
+
+  for (size_t i = 2; i < argc; i+=2){
+    if(strcmp(argv[i-1], "-i") == 0 || strcmp(argv[i-1], "--input") == 0)
+      filename = std::string(argv[i]);
+  }
 
   tinyobj::ObjReaderConfig reader_config;
   tinyobj::ObjReader reader;
@@ -255,27 +260,20 @@ int main(int argc, char *argv[]){
   Vec3 min_bounds = Vec3( 10000000.0, 10000000.0,   10000000.0);
   Vec3 max_bounds = Vec3(-10000000.0,-10000000.0,  -10000000.0);
 
-  for (int i = 0; i < vertex_count; i+=3){
-    min_bounds.e[0] = min(min_bounds.x(), attrib.vertices[i  ]);
-    min_bounds.e[1] = min(min_bounds.y(), attrib.vertices[i+1]);
-    min_bounds.e[2] = min(min_bounds.z(), attrib.vertices[i+2]);
+  for (int i = 0; i < attrib.vertices.size(); i+=3){
+    float x = attrib.vertices[i  ];
+    float y = attrib.vertices[i+1];
+    float z = attrib.vertices[i+2];
+    min_bounds.e[0] = min(min_bounds.x(), x);
+    min_bounds.e[1] = min(min_bounds.y(), y);
+    min_bounds.e[2] = min(min_bounds.z(), z);
 
-    max_bounds.e[0] = max(max_bounds.x(), attrib.vertices[i  ]);
-    max_bounds.e[1] = max(max_bounds.y(), attrib.vertices[i+1]);
-    max_bounds.e[2] = max(max_bounds.z(), attrib.vertices[i+2]);
+    max_bounds.e[0] = max(max_bounds.x(), x);
+    max_bounds.e[1] = max(max_bounds.y(), y);
+    max_bounds.e[2] = max(max_bounds.z(), z);
   }
-  printf("Calculated Min Bounds: (%f, %f, %f)\n", min_bounds.x(), min_bounds.y(), min_bounds.z());
-  printf("Calculated Max Bounds: (%f, %f, %f)\n", max_bounds.x(), max_bounds.y(), max_bounds.z());
-  
-  //BUG: Calculate these bounds, for some reason this does not work.
-  printf("Overwriting calculated bounds...\n");
-  min_bounds = Vec3(-245.425491, -99.999916, -1256.244751); //Only relevant for test2.obj
-  max_bounds = Vec3(302.590363, 546.458801, -250.774368);
-  // min_bounds = Vec3(-304.081207, -134.087631, -1420.60144); // For some reason, these are the vertex bounds in the test2.obj file.
-  // max_bounds = Vec3(313.978699, 563.428711, -219.069687);
-
-  printf("Min Bounds: (%f, %f, %f)\n", min_bounds.x(), min_bounds.y(), min_bounds.z());
-  printf("Max Bounds: (%f, %f, %f)\n", max_bounds.x(), max_bounds.y(), max_bounds.z());
+  printf("Scene bounds calculated...\n\tMin Bounds: (%f, %f, %f)\n", min_bounds.x(), min_bounds.y(), min_bounds.z());
+  printf("\tMax Bounds: (%f, %f, %f)\n", max_bounds.x(), max_bounds.y(), max_bounds.z());  
 
   //The Obj reader does not store vertex indices in contiguous memory.
   //Copy the indices into a block of memory on the host device.
@@ -376,8 +374,8 @@ int main(int argc, char *argv[]){
   serializeImageBuffer(ptr_host_img, output_filename, config.img_width, config.img_height);
   printf("Saved to disk.\n");
 
-  free(ptr_host_triangles);
   free(ptr_host_img);
+  free(ptr_host_triangles);
   checkCudaErrors(cudaFree(ptr_device_img));
   checkCudaErrors(cudaFree(d_rand_state));
   checkCudaErrors(cudaFree(ptr_device_triangles));

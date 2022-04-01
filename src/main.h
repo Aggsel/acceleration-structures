@@ -9,5 +9,5 @@ __device__ bool intersectSphere(Ray *ray, RayHit *bestHit, Vec3 point, float rad
 
 int serializeImageBuffer(Vec3 *ptr_img, const char *fileName, int image_width, int image_height);
 
-__device__ __host__ int mortonCode(Vec3 v);
+__device__ __host__ unsigned int mortonCode(Vec3 v);
 __device__ __host__ inline unsigned int expandBits(unsigned int v);

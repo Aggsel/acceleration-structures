@@ -2,7 +2,7 @@
 
 struct Triangle{
     public:
-    int morton_code;
+    unsigned int morton_code;
     int v0_index;
     int v1_index;
     int v2_index;

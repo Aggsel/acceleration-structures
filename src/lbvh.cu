@@ -25,14 +25,19 @@ __device__ int2 determineRange(Triangle *sorted_morton_codes, int total_primitiv
   //BUG: Properly handle out of bounds exceptions. (branchless? :O)
   int prev_code = sorted_morton_codes[node_index-1].morton_code;
   int next_code = sorted_morton_codes[node_index+1].morton_code;
+
   //BUG: Prevent duplicate morton codes.
-  // if(prev_code == current_code)
-  //   prev_code = prev_code ^ node_index-1;
-  // if(next_code == current_code)
-  //   next_code = next_code ^ node_index+1;
+  if(prev_code == current_code)
+    prev_code = prev_code ^ node_index-1;
+  if(next_code == current_code)
+    next_code = next_code ^ node_index+1;
+
   int next_delta = __clz(current_code ^ next_code);
   int prev_delta = __clz(current_code ^ prev_code);
   int d = next_delta - prev_delta < 0 ? -1 : 1;
+
+  if(next_code == current_code || prev_code == current_code)
+    printf("@BVH::determineRange()\tDuplicate morton codes found.\n");
 
   //Compute upper bound for the length of the range.
   //TODO: __Note from Karras 2012__:
@@ -116,9 +121,6 @@ __global__ void constructLBVH(Triangle *triangles, Node* internal_nodes, Node* l
   if(node_index >= primitive_count-1)
     return;
 
-  // Find out which range of objects the node corresponds to.
-  // (This is where the magic happens!)
-
   //binary search morton codes.
   int2 range = determineRange(triangles, primitive_count, node_index);
   int first = range.x;
@@ -128,9 +130,8 @@ __global__ void constructLBVH(Triangle *triangles, Node* internal_nodes, Node* l
   int split = findSplit(triangles, first, last);
 
   // Select left_child.
-  Node* left_child; // = &internal_nodes[split];
+  Node* left_child;
   if(split == first){
-    // printf("@BVH::constructLBVH() \tLeaf created during construction.\n"); //@debug
     left_child = &leaf_nodes[split];
     left_child->primitive = &triangles[split];
     left_child->aabb = triangles[split].aabb;
@@ -142,9 +143,8 @@ __global__ void constructLBVH(Triangle *triangles, Node* internal_nodes, Node* l
   left_child->parent = &internal_nodes[node_index];
 
   // Select right_child.
-  Node* right_child; // = &internal_nodes[split + 1];
+  Node* right_child;
   if(split + 1 == last){
-    // printf("@BVH::constructLBVH() \tLeaf created during construction.\n");  //@debug
     right_child = &leaf_nodes[split + 1];
     right_child->primitive = &triangles[split + 1];
     right_child->aabb = triangles[split + 1].aabb;
@@ -155,7 +155,7 @@ __global__ void constructLBVH(Triangle *triangles, Node* internal_nodes, Node* l
   }
   right_child->parent = &internal_nodes[node_index];
 
-  printf("Node: %i, \tMorton: %i, \tMin: %i, \tMax: %i, \tSplit: %i, \t%i, \t%i\n", node_index, triangles[node_index].morton_code, first, last, split, split == first, split + 1 == last); // @debug
+  // printf("Node: %i, \tMorton: %i, \tMin: %i, \tMax: %i, \tSplit: %i, \t%i, \t%i\n", node_index, triangles[node_index].morton_code, first, last, split, split == first, split + 1 == last); // @debug
 
   // Record parent-child relationships.
   internal_nodes[node_index].left_child = left_child;
@@ -168,9 +168,10 @@ __global__ void calculateAABB(Node* internal_nodes, Node* leaf_nodes, int leaf_c
   if(leaf_index >= leaf_count)
       return;
 
-  int v0 = leaf_nodes[leaf_index].primitive->v0_index;
-  int v1 = leaf_nodes[leaf_index].primitive->v1_index;
-  int v2 = leaf_nodes[leaf_index].primitive->v2_index;
+  Triangle *leaf_primitive = leaf_nodes[leaf_index].primitive;
+  int v0 = leaf_primitive->v0_index;
+  int v1 = leaf_primitive->v1_index;
+  int v2 = leaf_primitive->v2_index;
 
   Vec3 min_bounds = min(min(vert_buff[v0], vert_buff[v1]), vert_buff[v2]);
   Vec3 max_bounds = max(max(vert_buff[v0], vert_buff[v1]), vert_buff[v2]);
@@ -181,18 +182,18 @@ __global__ void calculateAABB(Node* internal_nodes, Node* leaf_nodes, int leaf_c
   Node* current_node_ptr = leaf_nodes[leaf_index].parent;
 
   if(!current_node_ptr){
-    printf("\nTHIS SHOULD NEVER HAPPEN OH GOD WHY\n");
+    printf("\nThis should never happen. Current node: %i, Parent: 0x%p\n", leaf_index, current_node_ptr);
     return;
   }
 
   current_node_ptr->aabb = leaf_aabb; //BUG: <- sometimes cudaErrorIllegalAddress
 
   while(true){
-    if(!current_node_ptr){
-      AABB aabb = internal_nodes[0].aabb;
-      printf("@BVH::constructAABB() \t internal_nodes[0]: 0x%p internal_nodes: 0x%p Min Bounds: (%f, %f, %f)\n", internal_nodes, internal_nodes, aabb.min_bounds.x(), aabb.min_bounds.y(), aabb.min_bounds.z());  //@debug
-      printf("@BVH::constructAABB() \t internal_nodes[0]: 0x%p internal_nodes: 0x%p Max Bounds: (%f, %f, %f)\n", internal_nodes, internal_nodes, aabb.max_bounds.x(), aabb.max_bounds.y(), aabb.max_bounds.z());  //@debug
-      return; //Root reached, return.
+    if(!current_node_ptr){   //Root reached, return.
+      AABB aabb = internal_nodes[0].aabb; //@debug
+      printf("@BVH::constructAABB() \tinternal_nodes: 0x%p Min Bounds: (%f,\t%f,\t%f)\n", internal_nodes, aabb.min_bounds.x(), aabb.min_bounds.y(), aabb.min_bounds.z());  //@debug
+      printf("@BVH::constructAABB() \tinternal_nodes: 0x%p Max Bounds: (%f,\t%f,\t%f)\n", internal_nodes, aabb.max_bounds.x(), aabb.max_bounds.y(), aabb.max_bounds.z());  //@debug
+      return;
     }
 
     int parent_index = current_node_ptr - internal_nodes;
@@ -201,10 +202,6 @@ __global__ void calculateAABB(Node* internal_nodes, Node* leaf_nodes, int leaf_c
       return;
     }
 
-    // if(current_node_ptr->left_child != nullptr)
-    //   current_node_ptr->aabb.join(current_node_ptr->left_child->aabb);
-    // if(current_node_ptr->right_child != nullptr)
-    //   current_node_ptr->aabb.join(current_node_ptr->right_child->aabb);
     current_node_ptr->aabb = AABB::join(current_node_ptr->left_child->aabb,
                                         current_node_ptr->right_child->aabb);
 
@@ -229,7 +226,7 @@ __global__ void calculateAABB(Node* internal_nodes, Node* leaf_nodes, int leaf_c
     // current_node_ptr->aabb.max_bounds.z() );
 
     if(!current_node_ptr->parent)   //Parent does not exist, we should be at the root.
-      printf("\nCurrent node (root): %p\n", current_node_ptr);
+      printf("\nRoot found. Final loop iteration. Device adress: 0x%p\n", current_node_ptr);
 
     current_node_ptr = current_node_ptr->parent;
   }
@@ -245,9 +242,7 @@ __global__ void traverseTree(Node* root){
   printf("\nTraversing tree...\n");
   Node* stack[64];
   Node** stackPtr = stack;
-
-  stackPtr++;
-  *stackPtr = (Node*)NULL;
+  *stackPtr++ = nullptr;
 
   int i = 0;
   int leaf_count = 0;
@@ -258,20 +253,25 @@ __global__ void traverseTree(Node* root){
 
     //Only continue traversing children if they're no leaves.
     //TODO: This is where we can check for ray aabb intersections. 
-    bool traverseL = !left_child->isLeaf;
-    bool traverseR = !right_child->isLeaf;
+    bool traverse_left  = !left_child ->isLeaf;
+    bool traverse_right = !right_child->isLeaf;
 
-    if (!traverseL && !traverseR){
-      leaf_count++;
+    if (!traverse_left || !traverse_right)    //@debug
+      leaf_count++;                           //@debug
+
+    if(!traverse_left && !traverse_right){
       node = *--stackPtr;
     }
     else{
-      node = (traverseL) ? left_child : right_child;
-      if (traverseL && traverseR)
+      //Prioritize traversing left branch.
+      node = traverse_left ? left_child : right_child;
+
+      //Push right child onto the stack if both branches should be traversed.
+      if (traverse_right)
         *stackPtr++ = right_child;
     }
     i++;
-  }while (node != nullptr);
+  }while(node);
 
   printf("Traversed %i nodes, %i leaves found.\n", i, leaf_count);
 }
