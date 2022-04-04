@@ -3,7 +3,6 @@
 #define EPSILON 0.000001
 
 #include <iostream>
-#include <curand_kernel.h>  //CUDA random
 #include <thrust/sort.h>
 
 #include "aabb.h"
@@ -15,166 +14,15 @@
 #include "raytracer/ray.h"
 #include "raytracer/hit.h"
 #include "raytracer/camera.h"
+#include "raytracer/raytracer.cuh"
+#include "image.h"
 #include "main.h"
 #include "math_util.h"
 
 #include "lbvh.cu"
 
-#include "cuda_helpers/helper_cuda.h"      //checkCudaErrors
-#include "tiny_obj_loader.h"
-
-__global__ void render(Vec3 *output_image, Camera cam, curandState *rand, RenderConfig config, Vec3 *vertices, Triangle *triangles, int vertex_count, Vec3 *normals){
-  int pixel_x = threadIdx.x + blockIdx.x * blockDim.x;
-  int pixel_y = threadIdx.y + blockIdx.y * blockDim.y;
-  if((pixel_x >= config.img_width) || (pixel_y >= config.img_height)) return;
-  int pixel_index = pixel_y*config.img_width + pixel_x;
-
-  curandState local_rand = rand[pixel_index];
-
-  Vec3 result = Vec3(0.0, 0.0, 0.0);
-  for (int i = 0; i < config.samples_per_pixel; i++){
-    Vec2 uv = Vec2((pixel_x + curand_uniform(&local_rand)) / (config.img_width-1), (pixel_y+ curand_uniform(&local_rand)) / (config.img_height-1));
-    Ray ray = Ray(Vec3(0,0,0), normalize(cam.lower_left_corner + uv.x()*cam.horizontal + uv.y()*cam.vertical - Vec3(0,0,0)) );
-    Vec3 out_col = color(&ray, &local_rand, config.max_bounces, vertices, triangles, vertex_count, normals);
-
-    float r = clamp01(out_col.x());
-    float g = clamp01(out_col.y());
-    float b = clamp01(out_col.z());
-    result = result + Vec3(r,g,b);
-  }
-  
-  //Gamma correction
-  float scale = 1.0 / config.samples_per_pixel;
-  float r = sqrt(scale * result.x());
-  float g = sqrt(scale * result.y());
-  float b = sqrt(scale * result.z());
-  result = Vec3(r,g,b);
-
-  output_image[pixel_index] = result;
-}
-
-//As mentioned in Accelerated Ray Tracing in One Weekend (https://developer.nvidia.com/blog/accelerated-ray-tracing-cuda/)
-//It's a good idea to seperate initialization and actual rendering if we want accurate performance numbers. 
-__global__ void initKernels(int image_width, int image_height, unsigned long long rand_seed, curandState *rand){
-  int pixel_x = threadIdx.x + blockIdx.x * blockDim.x;
-  int pixel_y = threadIdx.y + blockIdx.y * blockDim.y;
-  if((pixel_x >= image_width) || (pixel_y >= image_height))
-    return;
-  int pixel_index = pixel_y*image_width + pixel_x;
-
-  curand_init(rand_seed, pixel_index, 0, &rand[pixel_index]);
-}
-
-__device__ Vec3 color(Ray *ray, curandState *rand, int max_depth, Vec3 *vertices, Triangle *triangles, int vertex_count, Vec3 *normals) {
-  float cur_attenuation = 1.0f;
-  for(int i = 0; i < max_depth; i++) {
-    RayHit hit;
-    bool was_hit = false;
-    for (int j = 0; j < vertex_count/3; j++){ //TODO: Traverse acceleration structure.
-      RayHit tempHit;
-
-      if (!intersectTri(ray, &tempHit,  vertices[triangles[j].v0_index],
-                                        vertices[triangles[j].v1_index],
-                                        vertices[triangles[j].v2_index],
-                                        normals [triangles[j].v0_index],
-                                        normals [triangles[j].v1_index],
-                                        normals [triangles[j].v2_index]))
-        continue; //Did not hit triangle.
-      
-      if(tempHit.dist > hit.dist)
-        continue; //Hit triangle but not closest intersection so far.
-
-      hit.dist = tempHit.dist;
-      hit.normal = tempHit.normal;
-      hit.pos = tempHit.pos;
-      hit.uv = tempHit.uv;
-      was_hit = true;
-    }
-
-    if(was_hit){
-      Vec3 target = hit.pos + hit.normal + randomInUnitSphere(rand);
-      cur_attenuation *= 0.5f;
-      ray->org = hit.pos;
-      ray->dir = normalize(target - hit.pos);
-      continue;
-    }
-    else {
-      Vec3 unit_direction = normalize(ray->direction());
-      float t = 0.5f*(unit_direction.y() + 1.0f);
-      Vec3 c = (1.0f-t)*Vec3(1.0, 1.0, 1.0) + t*Vec3(0.5, 0.7, 1.0);
-      return cur_attenuation * c;
-    }
-  }
-  return Vec3(0.0, 0.0, 0.0);
-}
-
-__device__ Vec3 randomInUnitSphere(curandState *rand){
-  while(true){
-    float x = (curand_uniform(rand) * 2.0) - 1.0;
-    float y = (curand_uniform(rand) * 2.0) - 1.0;
-    float z = (curand_uniform(rand) * 2.0) - 1.0;
-    Vec3 p = Vec3(x, y, z);
-    if(sqrMagnitude(p) >= 1)
-      continue;
-    return p;
-  }
-}
-
-/* From Möller & Trumbore, Fast, Minimum Storage Ray/Triangle Intersection */
-__device__ bool intersectTri(Ray *ray, RayHit *bestHit, Vec3 v0, Vec3 v1, Vec3 v2, Vec3 n0, Vec3 n1, Vec3 n2){
-  Vec3 edge1 = v1 - v0;
-  Vec3 edge2 = v2 - v0;
-
-  Vec3 pvec = cross(ray->direction(), edge2);
-  float det = dot(edge1, pvec);
-  //Culling implementation
-  if(det < EPSILON)
-    return false;
-  
-  Vec3 tvec = ray->origin() - v0;
-  bestHit->uv.e[0] = dot(tvec, pvec);
-  if(bestHit->uv.x() < 0.0 || bestHit->uv.x() > det)
-    return false;
-
-  Vec3 qvec = cross(tvec, edge1);
-  bestHit->uv.e[1] = dot(ray->direction(), qvec);
-  if(bestHit->uv.y() < 0.0 || bestHit->uv.x() + bestHit->uv.y() > det)
-    return false;
-
-  float inv_det = 1.0 / det;
-  bestHit->dist = dot(edge2, qvec) * inv_det;
-  bestHit->uv.e[0] *= inv_det;
-  bestHit->uv.e[1] *= inv_det;
-  bestHit->normal = normalize(cross(edge1, edge2));
-  bestHit->pos = ray->point_along_ray(bestHit->dist);
-
-  //BUG: There's something funky with the normals when interpolating...
-  // bestHit->normal = normalize(bestHit->uv.x()*n1 + bestHit->uv.y() * n2 + (1.0 - bestHit->uv.x() - bestHit->uv.y()) * n0);
-  return true;
-}
-
-//From Shirleys Ray Tracing in One Weekend.
-__device__ bool intersectSphere(Ray *ray, RayHit *bestHit, Vec3 point, float radius){
-  Vec3 oc = ray->origin() - point;
-  float a = sqrMagnitude(ray->direction());
-  float half_b = dot(oc, ray->direction());
-  float c = sqrMagnitude(oc) - radius*radius;
-
-  float discriminant = half_b*half_b - a*c;
-  if (discriminant < 0) return false;
-  float sqrtd = sqrt(discriminant);
-
-  float root = (-half_b - sqrtd) / a;
-  if (root < 0.00001 || 999999.0 < root) {
-      root = (-half_b + sqrtd) / a;
-      if (root < 0.00001 || 999999.0 < root)
-          return false;
-  }
-  bestHit->dist = root;
-  bestHit->pos = ray->point_along_ray(bestHit->dist);
-  bestHit->normal = (bestHit->pos - point) / radius;
-  return true;
-}
+#include "third_party/cuda_helpers/helper_cuda.h"      //checkCudaErrors
+#include "third_party/tiny_obj_loader.h"
 
 // Expands a 10-bit integer into 30 bits
 // by inserting 2 zeros after each bit.
@@ -199,36 +47,33 @@ __device__ __host__ unsigned int mortonCode(Vec3 v){
   return xx | yy | zz;
 }
 
-// https://rosettacode.org/wiki/Bitmap/Write_a_PPM_file#C
-int serializeImageBuffer(Vec3 *ptr_img, const char *file_name, int image_width, int image_height){
-  FILE *fp = fopen(file_name, "w");
-  fprintf(fp, "P3\n%d %d\n255\n", image_width, image_height);
-
-  for (int j = image_height-1; j >= 0; j--) {
-    for (int i = 0; i < image_width; i++) {
-      size_t pixel_index = j*image_width + i;
-      float r = clamp01(abs(ptr_img[pixel_index].x()));
-      float g = clamp01(abs(ptr_img[pixel_index].y()));
-      float b = clamp01(abs(ptr_img[pixel_index].z()));
-      int ir = int(255.99*r);
-      int ig = int(255.99*g);
-      int ib = int(255.99*b);
-      fprintf(fp, "%d %d %d\n", ir, ig, ib);
-    }
-  }
-
-  fclose(fp);
-  return 0;
-}
-
 int main(int argc, char *argv[]){
   std::string filename = "sample_models/large_210.obj";
+  int samples_per_pixel = 30;
+  int image_height = 512;
+  int image_width = 512;
+  int max_bounces = 5;
+  char* output_filename = "output.ppm";
 
+  // ----------- CL ARGUMENTS  -----------
   for (size_t i = 2; i < argc; i+=2){
-    if(strcmp(argv[i-1], "-i") == 0 || strcmp(argv[i-1], "--input") == 0)
-      filename = std::string(argv[i]);
+    char* flag = argv[i-1];
+    char* parameter = argv[i];
+    if(!strcmp(flag, "-i") ||   !strcmp(flag, "--input"))
+      filename = std::string(parameter);
+    if(!strcmp(flag, "-o") ||   !strcmp(flag, "--image-output"))
+      output_filename = parameter;
+    if(!strcmp(flag, "-spp") || !strcmp(flag, "--samples-per-pixel"))
+      samples_per_pixel = atoi(parameter);
+    if(!strcmp(flag, "-iw") ||  !strcmp(flag, "--image-width"))
+      image_width = atoi(parameter);
+    if(!strcmp(flag, "-ih") ||  !strcmp(flag, "--image-height"))
+      image_height = atoi(parameter);
+    if(!strcmp(flag, "--max-depth"))
+      max_bounces = atoi(parameter);
   }
 
+  // ----------- LOAD SCENE  -----------
   tinyobj::ObjReaderConfig reader_config;
   tinyobj::ObjReader reader;
 
@@ -248,11 +93,13 @@ int main(int argc, char *argv[]){
 
   std::cout << "\nFile '" << filename << "' loaded." << std::endl;
   int vertex_count = (int)(attrib.vertices.size()) / 3;
-  printf("# vertices        = %d\n", vertex_count);
+  printf("\t# vertices        = %d\n", vertex_count);
   int indices_count = (int)(shapes[0].mesh.indices.size());
-  printf("# vertex indices  = %d\n", indices_count);
+  printf("\t# vertex indices  = %d\n", indices_count);
   int normals_count = (int)(attrib.normals.size()) / 3;
-  printf("# normals         = %d\n\n", normals_count);
+  printf("\t# normals         = %d\n", normals_count);
+  int poly_count = indices_count / 3;
+  printf("\t# triangles       = %d\n\n", poly_count);
 
 
   //Calculate scene bounding box. This is not strictly required if we make sure to resolve duplicate codes.
@@ -277,7 +124,7 @@ int main(int argc, char *argv[]){
 
   //The Obj reader does not store vertex indices in contiguous memory.
   //Copy the indices into a block of memory on the host device.
-  Triangle *ptr_host_triangles = (Triangle*)malloc(sizeof(Triangle) * indices_count/3);
+  Triangle *ptr_host_triangles = (Triangle*)malloc(sizeof(Triangle) * poly_count);
   for (int i = 0; i < indices_count; i+=3){
     Triangle tempTri = Triangle();
     int v0_index = shapes[0].mesh.indices[i  ].vertex_index;
@@ -317,67 +164,43 @@ int main(int argc, char *argv[]){
   }
 
   //Allocate and memcpy index, vertex and normal buffers from host to device.
-  Triangle *ptr_device_triangles;
-  checkCudaErrors(cudaMalloc((void**)&ptr_device_triangles, indices_count/3 * sizeof(Triangle)));
-  checkCudaErrors(cudaMemcpy(ptr_device_triangles, ptr_host_triangles, indices_count/3 * sizeof(Triangle), cudaMemcpyHostToDevice));
-  
-  Vec3 *ptr_device_vertices;
-  checkCudaErrors(cudaMalloc(&ptr_device_vertices, vertex_count * sizeof(Vec3)));
-  checkCudaErrors(cudaMemcpy(ptr_device_vertices, attrib.vertices.data(), vertex_count * sizeof(Vec3), cudaMemcpyHostToDevice));
+  Triangle *ptr_device_triangles = nullptr;
+  cudaMalloc(&ptr_device_triangles, poly_count * sizeof(Triangle));
+  cudaMemcpy(ptr_device_triangles, ptr_host_triangles, poly_count * sizeof(Triangle), cudaMemcpyHostToDevice);
 
-  Vec3 *ptr_device_normals;
-  checkCudaErrors(cudaMalloc(&ptr_device_normals, normals_count * sizeof(Vec3)));
-  checkCudaErrors(cudaMemcpy(ptr_device_normals, attrib.normals.data(), normals_count * sizeof(Vec3), cudaMemcpyHostToDevice));
+  Vec3 *ptr_device_vertices = nullptr;
+  cudaMalloc(&ptr_device_vertices, vertex_count * sizeof(Vec3));
+  cudaMemcpy(ptr_device_vertices, attrib.vertices.data(), vertex_count * sizeof(Vec3), cudaMemcpyHostToDevice);
 
-  //Set default values for filename and image size.
-  char* output_filename = "output.ppm";
-                    //w    h    spp   max_depth
-  RenderConfig config(512, 512, 30, 5         );
-  Camera cam = Camera(config.img_width, config.img_height, 90.0f, 1.0f, Vec3(0,0,0));
+  Vec3 *ptr_device_normals = nullptr;
+  cudaMalloc(&ptr_device_normals, normals_count * sizeof(Vec3));
+  cudaMemcpy(ptr_device_normals, attrib.normals.data(), normals_count * sizeof(Vec3), cudaMemcpyHostToDevice);
 
-  curandState *d_rand_state;
-  Vec3 *ptr_device_img;
-  checkCudaErrors(cudaMalloc(&d_rand_state, config.img_width * config.img_height*sizeof(curandState)));
-  checkCudaErrors(cudaMalloc(&ptr_device_img, config.img_width * config.img_height*sizeof(Vec3)));
 
   // ----------- SORT -----------
   // Sorts the triangle buffer based on the computed morton codes. (using < overloading from the triangle struct).
-  thrust::sort(thrust::device, ptr_device_triangles, ptr_device_triangles+indices_count/3);
+  thrust::sort(thrust::device, ptr_device_triangles, ptr_device_triangles+poly_count);
 
 
   // ----------- CONSTRUCT Karras 2012 -----------
-  int primitive_count = indices_count/3;
-  BVH bvh = BVH(ptr_device_triangles, primitive_count, ptr_device_vertices, vertex_count);
+  BVH bvh(ptr_device_triangles, poly_count, ptr_device_vertices, vertex_count);
   Node* ptr_device_tree = bvh.construct();
-  printf("Primitives: %i, Thread blocks: %i, Threads per block: %i \n", primitive_count, primitive_count/64+1, 64);
-  //TODO: Verify tree structure.
-
 
   // ----------- RENDER -----------
-  int threads_x = 8;
-  int threads_y = 8;
-  dim3 threads(threads_x,threads_y);
-  dim3 tracingBlocks(config.img_width/threads_x+1,config.img_height/threads_y+1);
+  // RenderConfig config(image_width, image_height, samples_per_pixel, max_bounces, 1337);
+  // Camera cam = Camera(config.img_width, config.img_height, 90.0f, 1.0f, Vec3(0,0,0));
+  // Raytracer raytracer = Raytracer(config, ptr_device_vertices, ptr_device_normals, ptr_device_triangles, indices_count);
+  // printf("Starting rendering...\n");
+  // Vec3* ptr_device_img = raytracer.render(cam);
+  // printf("Render complete.\n");
 
-  printf("Initializing kernels... ");
-  initKernels<<<tracingBlocks, threads>>>(config.img_width, config.img_height, 1337, d_rand_state);
-  checkCudaErrors(cudaDeviceSynchronize());
+  // //Copy framebuffer to host and save to disk.
+  // Image render_output = Image(config.img_width, config.img_height);
+  // render_output.copyFromDevice(ptr_device_img, config.img_height * config.img_width);
+  // render_output.save(output_filename);
+  // printf("%s saved to disk.\n", output_filename);
 
-  printf("Initialization complete.\nStarting Rendering... ");
-  render<<<tracingBlocks, threads>>>(ptr_device_img, cam, d_rand_state, config, ptr_device_vertices, ptr_device_triangles, indices_count, ptr_device_normals);
-  checkCudaErrors(cudaDeviceSynchronize());
-
-  //Copy framebuffer to host and save to disk.
-  Vec3 *ptr_host_img = (Vec3*)malloc(sizeof(Vec3) * config.img_height * config.img_width);
-  checkCudaErrors(cudaMemcpy(ptr_host_img, ptr_device_img, sizeof(Vec3) * config.img_height * config.img_width, cudaMemcpyDeviceToHost));
-  printf("Render complete.\nWriting to disk... ");
-  serializeImageBuffer(ptr_host_img, output_filename, config.img_width, config.img_height);
-  printf("Saved to disk.\n");
-
-  free(ptr_host_img);
   free(ptr_host_triangles);
-  checkCudaErrors(cudaFree(ptr_device_img));
-  checkCudaErrors(cudaFree(d_rand_state));
   checkCudaErrors(cudaFree(ptr_device_triangles));
   checkCudaErrors(cudaFree(ptr_device_vertices));
   checkCudaErrors(cudaFree(ptr_device_normals));
