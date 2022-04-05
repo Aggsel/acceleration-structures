@@ -10,7 +10,7 @@ class AABB{
         this->min_bounds = min_bounds;
         this->max_bounds = max_bounds;
     }
-    __device__ __host__ AABB() = default;
+    AABB() = default;
     __device__ __host__ void join(AABB otherAABB);
     __device__ __host__ static AABB join(AABB aabb_1, AABB aabb_2);
     __device__ __host__ bool intersect_ray(Ray ray);

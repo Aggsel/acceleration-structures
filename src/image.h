@@ -22,8 +22,8 @@ class Image{
     }
 
     bool copyFromDevice(Vec3* device_ptr, int size){
-        if(size != width * height)
-            return false;
+        assert(size == width * height);
+
         frame_buffer = (Vec3*)malloc(sizeof(Vec3)*size);
         if(!frame_buffer)
             return false;

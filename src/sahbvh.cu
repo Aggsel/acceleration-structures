@@ -20,12 +20,19 @@ class SAHBVH{
   Vec3* ptr_device_vertices;
   int vertex_count;
 
+  AABB scene_bounds;
+
   public:
-  SAHBVH(Triangle* ptr_device_triangles, int triangle_count, Vec3* ptr_device_vertices, int vertex_count){
+  SAHBVH(Triangle* ptr_device_triangles, int triangle_count, Vec3* ptr_device_vertices, int vertex_count, AABB scene_bounds){
     checkCudaErrors(cudaMalloc(&ptr_device_internal_nodes, (triangle_count-1)*sizeof(Node)));
     checkCudaErrors(cudaMalloc(&ptr_device_leaf_nodes, (triangle_count)*sizeof(Node)));
     checkCudaErrors(cudaMemset(ptr_device_internal_nodes, 0, (triangle_count-1)*sizeof(Node)));
     checkCudaErrors(cudaMemset(ptr_device_leaf_nodes, 0, (triangle_count)*sizeof(Node)));
+
+    this->vertex_count = vertex_count;
+    this->scene_bounds = scene_bounds;
+    this->ptr_device_vertices = ptr_device_vertices;
+    this->ptr_device_triangles = ptr_device_triangles;
   }
 
   ~SAHBVH(){
@@ -38,7 +45,7 @@ class SAHBVH{
     const int threads_per_block = 512;
     constructSAHBVH<<<(triangle_count-1)/threads_per_block+1, threads_per_block>>>(ptr_device_triangles, ptr_device_internal_nodes, ptr_device_leaf_nodes, triangle_count);
     checkCudaErrors(cudaDeviceSynchronize());
-    printf("LBVH Construction completed.\n");
+    printf("SAH BVH Construction completed.\n");
     return ptr_device_internal_nodes;
   }
 };

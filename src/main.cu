@@ -74,15 +74,16 @@ int main(int argc, char *argv[]){
   const tinyobj::attrib_t &attrib = reader.GetAttrib();
   const std::vector<tinyobj::shape_t> &shapes = reader.GetShapes();
 
-  std::cout << "\nFile '" << filename << "' loaded." << std::endl;
   int vertex_count = (int)(attrib.vertices.size()) / 3;
-  printf("\t# vertices        = %d\n", vertex_count);
   int indices_count = (int)(shapes[0].mesh.indices.size());
-  printf("\t# vertex indices  = %d\n", indices_count);
   int normals_count = (int)(attrib.normals.size()) / 3;
-  printf("\t# normals         = %d\n", normals_count);
-  int poly_count = indices_count / 3;
-  printf("\t# triangles       = %d\n\n", poly_count);
+  int triangle_count = indices_count / 3;
+
+  printf("\nFile %s loaded.\n", filename.c_str());
+  printf("\t# vertices        = %d\n",   vertex_count);
+  printf("\t# vertex indices  = %d\n",   indices_count);
+  printf("\t# normals         = %d\n",   normals_count);
+  printf("\t# triangles       = %d\n\n", triangle_count);
 
   // ------------ Scene bounding box -----------------
   Vec3 min_bounds = Vec3( 100000000.0, 100000000.0,   100000000.0);
@@ -108,7 +109,7 @@ int main(int argc, char *argv[]){
   //The Obj reader does not store vertex indices in contiguous memory.
   //Copy the indices into a block of memory on the host device.
   //This is required beforehand regardless och BVH construction method.
-  Triangle *ptr_host_triangles = (Triangle*)malloc(sizeof(Triangle) * poly_count);
+  Triangle *ptr_host_triangles = (Triangle*)malloc(sizeof(Triangle) * triangle_count);
   for (int i = 0; i < indices_count; i+=3){
     Triangle tempTri = Triangle();
     int v0_index = shapes[0].mesh.indices[i  ].vertex_index;
@@ -122,8 +123,8 @@ int main(int argc, char *argv[]){
 
   //Allocate and memcpy index, vertex and normal buffers from host to device.
   Triangle *ptr_device_triangles = nullptr;
-  cudaMalloc(&ptr_device_triangles, poly_count * sizeof(Triangle));
-  cudaMemcpy(ptr_device_triangles, ptr_host_triangles, poly_count * sizeof(Triangle), cudaMemcpyHostToDevice);
+  cudaMalloc(&ptr_device_triangles, triangle_count * sizeof(Triangle));
+  cudaMemcpy(ptr_device_triangles, ptr_host_triangles, triangle_count * sizeof(Triangle), cudaMemcpyHostToDevice);
 
   Vec3 *ptr_device_vertices = nullptr;
   cudaMalloc(&ptr_device_vertices, vertex_count * sizeof(Vec3));
@@ -132,26 +133,28 @@ int main(int argc, char *argv[]){
   Vec3 *ptr_device_normals = nullptr;
   cudaMalloc(&ptr_device_normals, normals_count * sizeof(Vec3));
   cudaMemcpy(ptr_device_normals, attrib.normals.data(), normals_count * sizeof(Vec3), cudaMemcpyHostToDevice);
+  
+  //BUG / Minor Issue: Calling the constructor for both of these classes will allocate 
+  //                   device memory that might not be used. This should ideally be done
+  //                   using a strategy pattern or similar.
+  LBVH lbvh(ptr_device_triangles, triangle_count, ptr_device_vertices, vertex_count, scene_bounding_box);  
+  SAHBVH sahbvh(ptr_device_triangles, triangle_count, ptr_device_vertices, vertex_count, scene_bounding_box);
 
-
-  // ----------- CONSTRUCT Karras 2012 -----------
-  LBVH lbvh(ptr_device_triangles, poly_count, ptr_device_vertices, vertex_count, scene_bounding_box);
-  Node* ptr_device_tree = lbvh.construct();
+  //Depending on user choice, construct BVH.
+  Node* ptr_device_tree;
+  if(bvh_type == BVH_Type::lbvh)
+    ptr_device_tree = lbvh.construct(); // Construct Karras 2012
+  else if(bvh_type == BVH_Type::sahbvh) // Construct Wald 2007 
+    ptr_device_tree = sahbvh.construct();
 
   // ----------- RENDER -----------
   RenderConfig config(image_width, image_height, samples_per_pixel, max_bounces, 1337);
   Camera cam = Camera(config.img_width, config.img_height, 90.0f, 1.0f, Vec3(0,0,0));
   Raytracer raytracer = Raytracer(config, ptr_device_vertices, ptr_device_normals, ptr_device_triangles, indices_count);
+
   printf("Starting rendering...\n");
-  Vec3* ptr_device_img = nullptr;
-  switch(bvh_type){
-    case BVH_Type::none:
-      ptr_device_img = raytracer.render(cam);
-      break;
-    case BVH_Type::lbvh || BVH_Type::sahbvh:
-      ptr_device_img = raytracer.renderBVH(ptr_device_tree, cam);
-      break;
-  }
+  //Render with traversal if a BVH is selected.
+  Vec3* ptr_device_img = bvh_type == BVH_Type::none ? raytracer.render(cam) : raytracer.render(cam, ptr_device_tree);
   printf("Render complete.\n");
 
   //Copy framebuffer to host and save to disk.

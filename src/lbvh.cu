@@ -3,6 +3,7 @@
 #include <thrust/sort.h>
 #include "triangle.h"
 #include "node.h"
+#include "debug.cu"
 #include "third_party/cuda_helpers/helper_cuda.h"
 
 __global__ void constructLBVH(Triangle *triangles, Node* internal_nodes, Node* leaf_nodes, int primitive_count);
@@ -14,7 +15,7 @@ __device__ unsigned int mortonCode(Vec3 v);
 __device__ inline unsigned int expandBits(unsigned int v);
 
 // https://developer.nvidia.com/blog/thinking-parallel-part-iii-tree-construction-gpu/
-__device__ __host__ inline unsigned int expandBits(unsigned int v){
+__device__ inline unsigned int expandBits(unsigned int v){
   v = (v * 0x00010001u) & 0xFF0000FFu;
   v = (v * 0x00000101u) & 0x0F00F00Fu;
   v = (v * 0x00000011u) & 0xC30C30C3u;
@@ -68,6 +69,7 @@ __device__ int commonPrefix(Triangle *morton_codes, int index1, int index2){
 __device__ int2 determineRange(Triangle *sorted_morton_codes, int total_primitives, int node_index){
   //Time complexity of the algorithm is proportional to the number of keys covered by the nodes.
   //The widest node is also one that we know in advance:
+  //TODO @perf: Does this actually help performance wise?
   if(node_index == 0){
     int2 range;
     range.x = 0;
@@ -157,7 +159,8 @@ __global__ void constructLBVH(Triangle *triangles, Node* internal_nodes, Node* l
   if(node_index >= primitive_count-1)
     return;
 
-  //binary search morton codes.
+  //Determine the range of the current node by performing a binary search on the
+  //largest common prefix for neighboring morton codes.
   int2 range = determineRange(triangles, primitive_count, node_index);
   int first = range.x;
   int last = range.y;
@@ -200,8 +203,6 @@ __global__ void constructLBVH(Triangle *triangles, Node* internal_nodes, Node* l
   left_child->parent = self_ptr;
   self_ptr->left_child = left_child;
   self_ptr->right_child = right_child;
-
-  // Node 0 is always the root of the tree, the pointer supplied (Node* internalNodes) will be the address of the root.
 }
 
 //In parallel, traverse the tree from each leaf upwards.
@@ -244,65 +245,6 @@ __global__ void calculateAABB(Node* internal_nodes, Node* leaf_nodes, int leaf_c
 
     parent_node = parent_node->parent;
   }
-  
-  //  Relevant resources:
-  //  https://docs.nvidia.com/cuda/cuda-c-programming-guide/index.html#atomic-functions
-  //  https://developer.nvidia.com/blog/thinking-parallel-part-iii-tree-construction-gpu/
-}
-
-// Modified from 
-// https://developer.nvidia.com/blog/thinking-parallel-part-ii-tree-traversal-gpu/
-// TODO: This is not optimized AT ALL.
-__global__ void traverseTree(Node* root){
-  printf("\nTraversing tree...\n");
-  Node* stack[128];
-  int stack_index = -1;
-  stack_index++;
-  stack[stack_index] = nullptr;
-
-  int i = 0;
-  Node* node = root;
-  do{
-    Node* left_child = node->left_child;
-    Node* right_child = node->right_child;
-
-    //Only continue traversing children if they're no leaves.
-    //TODO: This is where we can check for ray aabb intersections. 
-    bool traverse_left  = !left_child ->isLeaf;
-    bool traverse_right = !right_child->isLeaf;
-
-    if(!traverse_left && !traverse_right){
-      node = stack[stack_index];
-      stack_index--;
-    }
-    else{
-      //Prioritize traversing left branch.
-      node = traverse_left ? left_child : right_child;
-
-      //Push right child onto the stack if both branches should be traversed.
-      if (traverse_left && traverse_right){
-        stack_index++;
-        stack[stack_index] = right_child;
-      }
-    }
-    i++;
-  }while(node != nullptr);
-}
-
-__global__ void printInternalNodes(Node* internal_nodes, int primitive_count, Triangle* leaf_nodes){
-  int node_index = blockIdx.x *blockDim.x + threadIdx.x;
-  if(node_index >= primitive_count-1)
-    return;
-  Node* node = &internal_nodes[node_index];
-  printf("Node: %i\tNode: 0x%p\tParent: 0x%p, \tLeft Child: 0x%p, \tRight Child: 0x%p\tMorton: %i\n", node_index, node, node->parent, node->left_child, node->right_child, leaf_nodes[node_index].morton_code);
-}
-
-__global__ void printLeafNodes(Node* leaf_nodes, int primitive_count, Triangle* triangles){
-  int node_index = blockIdx.x *blockDim.x + threadIdx.x;
-  if(node_index >= primitive_count)
-    return;
-  Node* node = &leaf_nodes[node_index];
-  printf("Leaf: \tNode: %i\tNode: 0x%p\tParent: 0x%p, \tLeft Child: 0x%p, \tRight Child: 0x%p\tMorton: %i\n", node_index, node, node->parent, node->left_child, node->right_child, triangles[node_index].morton_code);
 }
 
 class LBVH{
@@ -329,22 +271,19 @@ class LBVH{
   LBVH(Triangle* ptr_device_triangles, int triangle_count, Vec3* ptr_device_vertices, int vertex_count, AABB scene_bounds){
     this->ptr_device_triangles = ptr_device_triangles;
     this->triangle_count = triangle_count;
-
     this->ptr_device_vertices = ptr_device_vertices;
-    this->vertex_count = vertex_count;
 
+    this->vertex_count = vertex_count;
     this->scene_bounds = scene_bounds;
 
     // Allocate and initialize memory for:
     // BVH internal nodes, leaf nodes and our AABB bottom up traversal counter buffer.
-
     checkCudaErrors(cudaMalloc(&ptr_device_internal_nodes, (triangle_count-1)*sizeof(Node)));
     checkCudaErrors(cudaMalloc(&ptr_device_leaf_nodes, (triangle_count)*sizeof(Node)));
+    checkCudaErrors(cudaMalloc(&ptr_device_visited_node_counters, (triangle_count-1)));
     //There's no calloc equivalent for cuda. https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__MEMORY.html
     checkCudaErrors(cudaMemset(ptr_device_internal_nodes, 0, (triangle_count-1)*sizeof(Node)));
     checkCudaErrors(cudaMemset(ptr_device_leaf_nodes, 0, (triangle_count)*sizeof(Node)));
-
-    checkCudaErrors(cudaMalloc(&ptr_device_visited_node_counters, (triangle_count-1)));
     checkCudaErrors(cudaMemset(ptr_device_visited_node_counters, 0, (triangle_count-1)));
   }
 
@@ -356,28 +295,25 @@ class LBVH{
 
   //Returns device ptr to root of tree.
   Node* construct(){
-    //TODO: Move morton code generation, scene bounding box calculation etc to this function.
-    // <<<x,y>>> Launches x thread blocks with y threads per block.
     const int threads_per_block = 512;
+    //1. Generate morton codes for each scene primitive.
     populateMortonCodes();
 
-    // ----------- SORT -----------
-    // Sorts the triangle buffer based on the computed morton codes. (using < overloading from the triangle struct).
+    //2. Sort scene primitives along morton curve.
     thrust::sort(thrust::device, ptr_device_triangles, ptr_device_triangles+triangle_count);
 
+    //3. For each internal node in the tree, calculate it's range and children.
     constructLBVH<<<(triangle_count-1)/threads_per_block+1, threads_per_block>>>(ptr_device_triangles, ptr_device_internal_nodes, ptr_device_leaf_nodes, triangle_count);
     checkCudaErrors(cudaDeviceSynchronize());
 
+    // DebugHelper::PrintNodes(ptr_device_internal_nodes, triangle_count-1, ptr_device_triangles);
+    // DebugHelper::PrintNodes(ptr_device_leaf_nodes,     triangle_count,   ptr_device_triangles);
+
+    //4. From each leaf node, traverse the tree towards the root of the tree.
+    //   If the branch is the first to reach a given node, stop.
+    //   If the branch is second, join the childrens AABB and continue traversal.
     calculateAABB<<<triangle_count/threads_per_block+1, threads_per_block>>>(ptr_device_internal_nodes, ptr_device_leaf_nodes, triangle_count, ptr_device_vertices, ptr_device_visited_node_counters);
     checkCudaErrors(cudaDeviceSynchronize());
-
-    // --- @Debug purposes ---
-    // printInternalNodes<<<(triangle_count-1)/threads_per_block+1, threads_per_block>>>(ptr_device_internal_nodes, triangle_count, ptr_device_triangles);
-    // checkCudaErrors(cudaDeviceSynchronize());
-    // printLeafNodes<<<triangle_count/threads_per_block+1, threads_per_block>>>(ptr_device_leaf_nodes, triangle_count, ptr_device_triangles);
-    // checkCudaErrors(cudaDeviceSynchronize());
-    // traverseTree<<<1,1>>>(ptr_device_internal_nodes);
-    // checkCudaErrors(cudaDeviceSynchronize());
 
     printf("LBVH Construction completed.\n");
     return ptr_device_internal_nodes;

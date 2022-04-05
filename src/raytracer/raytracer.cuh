@@ -6,16 +6,15 @@
 #include "raytracer/render_config.h"
 #include "third_party/cuda_helpers/helper_cuda.h"
 
-__global__ void render_kernel(Vec3 *output_image, Camera cam, curandState *rand, RenderConfig config, Vec3 *vertices, Triangle *triangles, int vertex_count, Vec3 *normals);
-__global__ void renderBVH_kernel(Vec3 *output_image, Node* bvh_root, Camera cam, curandState *rand, RenderConfig config, Vec3 *vertices, Triangle *triangles, int vertex_count, Vec3 *normals);
-__global__ void init_kernels(int image_width, int image_height, curandState *rand);
+__global__ void d_render(Vec3 *output_image, Camera cam, curandState *rand, RenderConfig config, Vec3 *vertices, Triangle *triangles, int vertex_count, Vec3 *normals);
+__global__ void d_render(Vec3 *output_image, Camera cam, curandState *rand, RenderConfig config, Vec3 *vertices, Triangle *triangles, int vertex_count, Vec3 *normals, Node* bvh_root);
+__global__ void initKernels(int image_width, int image_height, curandState *rand);
 __device__ Vec3 color(Ray *ray, curandState *rand, int max_depth, Vec3 *vertices, Triangle *triangles, int vertex_count, Vec3 *normals);
-__device__ Vec3 colorBVH(Ray *ray, curandState *rand, Node* bvh_root, int max_depth, Vec3 *vertices, int vertex_count, Vec3 *normals);
+__device__ Vec3 color(Ray *ray, curandState *rand, int max_depth, Vec3 *vertices, int vertex_count, Vec3 *normals, Node* bvh_root);
 __device__ Vec3 randomInUnitSphere(curandState *rand);
 __device__ bool intersectTri(Ray *ray, RayHit *bestHit, Vec3 v0, Vec3 v1, Vec3 v2, Vec3 n0, Vec3 n1, Vec3 n2);
-__device__ bool intersectSphere(Ray *ray, RayHit *bestHit, Vec3 point, float radius);
 
-__global__ void renderBVH_kernel(Vec3 *output_image, Node* bvh_root, Camera cam, curandState *rand, RenderConfig config, Vec3 *vertices, Triangle *triangles, int vertex_count, Vec3 *normals){
+__global__ void d_render(Vec3 *output_image, Camera cam, curandState *rand, RenderConfig config, Vec3 *vertices, Triangle *triangles, int vertex_count, Vec3 *normals, Node* bvh_root){
   int pixel_x = threadIdx.x + blockIdx.x * blockDim.x;
   int pixel_y = threadIdx.y + blockIdx.y * blockDim.y;
   if((pixel_x >= config.img_width) || (pixel_y >= config.img_height)) return;
@@ -27,7 +26,7 @@ __global__ void renderBVH_kernel(Vec3 *output_image, Node* bvh_root, Camera cam,
   for (int i = 0; i < config.samples_per_pixel; i++){
     Vec2 uv = Vec2((pixel_x + curand_uniform(&local_rand)) / (config.img_width-1), (pixel_y+ curand_uniform(&local_rand)) / (config.img_height-1));
     Ray ray = Ray(Vec3(0,0,0), normalize(cam.lower_left_corner + uv.x()*cam.horizontal + uv.y()*cam.vertical - Vec3(0,0,0)) );
-    Vec3 out_col = colorBVH(&ray, &local_rand, bvh_root, config.max_bounces, vertices, vertex_count, normals);
+    Vec3 out_col = color(&ray, &local_rand, config.max_bounces, vertices, vertex_count, normals, bvh_root);
 
     float r = clamp01(out_col.x());
     float g = clamp01(out_col.y());
@@ -45,7 +44,7 @@ __global__ void renderBVH_kernel(Vec3 *output_image, Node* bvh_root, Camera cam,
   output_image[pixel_index] = result;
 }
 
-__global__ void render_kernel(Vec3 *output_image, Camera cam, curandState *rand, RenderConfig config, Vec3 *vertices, Triangle *triangles, int vertex_count, Vec3 *normals){
+__global__ void d_render(Vec3 *output_image, Camera cam, curandState *rand, RenderConfig config, Vec3 *vertices, Triangle *triangles, int vertex_count, Vec3 *normals){
   int pixel_x = threadIdx.x + blockIdx.x * blockDim.x;
   int pixel_y = threadIdx.y + blockIdx.y * blockDim.y;
   if((pixel_x >= config.img_width) || (pixel_y >= config.img_height)) return;
@@ -76,7 +75,7 @@ __global__ void render_kernel(Vec3 *output_image, Camera cam, curandState *rand,
 }
 
 //As mentioned in Accelerated Ray Tracing in One Weekend (https://developer.nvidia.com/blog/accelerated-ray-tracing-cuda/)
-//It's a good idea to seperate initialization and actual rendering if we want accurate performance numbers. 
+//It's a good idea to seperate initialization and actual rendering if we want accurate performance numbers.
 __global__ void initKernels(int image_width, int image_height, unsigned long long rand_seed, curandState *rand){
   int pixel_x = threadIdx.x + blockIdx.x * blockDim.x;
   int pixel_y = threadIdx.y + blockIdx.y * blockDim.y;
@@ -87,7 +86,8 @@ __global__ void initKernels(int image_width, int image_height, unsigned long lon
   curand_init(rand_seed, pixel_index, 0, &rand[pixel_index]);
 }
 
-__device__ Vec3 colorBVH(Ray *ray, curandState *rand, Node* bvh_root, int max_depth, Vec3 *vertices, int vertex_count, Vec3 *normals) {
+// Traversal: https://developer.nvidia.com/blog/thinking-parallel-part-ii-tree-traversal-gpu/
+__device__ Vec3 color(Ray *ray, curandState *rand, int max_depth, Vec3 *vertices, int vertex_count, Vec3 *normals, Node* bvh_root) {
   float cur_attenuation = 1.0f;
   
   for(int i = 0; i < max_depth; i++) {
@@ -146,8 +146,6 @@ __device__ Vec3 colorBVH(Ray *ray, curandState *rand, Node* bvh_root, int max_de
         }
       }
 
-      //Only continue traversing children if they're no leaves.
-      //TODO: This is where we can check for ray aabb intersections.
       bool traverse_left = (!left_child->isLeaf) && left_aabb_intersect;
       bool traverse_right = (!right_child->isLeaf) && right_aabb_intersect;
 
@@ -193,12 +191,8 @@ __device__ Vec3 color(Ray *ray, curandState *rand, int max_depth, Vec3 *vertices
     for (int j = 0; j < vertex_count/3; j++){
       RayHit tempHit;
 
-      if (!intersectTri(ray, &tempHit,  vertices[triangles[j].v0_index],
-                                        vertices[triangles[j].v1_index],
-                                        vertices[triangles[j].v2_index],
-                                        normals [triangles[j].v0_index],
-                                        normals [triangles[j].v1_index],
-                                        normals [triangles[j].v2_index]))
+      if (!intersectTri(ray, &tempHit,  vertices[triangles[j].v0_index], vertices[triangles[j].v1_index], vertices[triangles[j].v2_index],
+                                        normals [triangles[j].v0_index], normals [triangles[j].v1_index], normals [triangles[j].v2_index]))
         continue; //Did not hit triangle.
       
       if(tempHit.dist > hit.dist)
@@ -273,29 +267,6 @@ __device__ bool intersectTri(Ray *ray, RayHit *hit, Vec3 v0, Vec3 v1, Vec3 v2, V
   return true;
 }
 
-//From Shirleys Ray Tracing in One Weekend.
-__device__ bool intersectSphere(Ray *ray, RayHit *bestHit, Vec3 point, float radius){
-  Vec3 oc = ray->origin() - point;
-  float a = sqrMagnitude(ray->direction());
-  float half_b = dot(oc, ray->direction());
-  float c = sqrMagnitude(oc) - radius*radius;
-
-  float discriminant = half_b*half_b - a*c;
-  if (discriminant < 0) return false;
-  float sqrtd = sqrt(discriminant);
-
-  float root = (-half_b - sqrtd) / a;
-  if (root < 0.00001 || 999999.0 < root) {
-      root = (-half_b + sqrtd) / a;
-      if (root < 0.00001 || 999999.0 < root)
-          return false;
-  }
-  bestHit->dist = root;
-  bestHit->pos = ray->point_along_ray(bestHit->dist);
-  bestHit->normal = (bestHit->pos - point) / radius;
-  return true;
-}
-
 class Raytracer{
     curandState *d_rand_state;
     Vec3 *ptr_device_img;
@@ -334,13 +305,13 @@ class Raytracer{
     }
 
     Vec3* render(Camera cam){
-        render_kernel<<<blocks, threads>>>(ptr_device_img, cam, d_rand_state, config, ptr_device_vertices, ptr_device_triangles, index_count, ptr_device_normals);
+        d_render<<<blocks, threads>>>(ptr_device_img, cam, d_rand_state, config, ptr_device_vertices, ptr_device_triangles, index_count, ptr_device_normals);
         checkCudaErrors(cudaDeviceSynchronize());
         return ptr_device_img;
     }
 
-    Vec3* renderBVH(Node* bvh_root, Camera cam){
-      renderBVH_kernel<<<blocks, threads>>>(ptr_device_img, bvh_root, cam, d_rand_state, config, ptr_device_vertices, ptr_device_triangles, index_count, ptr_device_normals);
+    Vec3* render(Camera cam, Node* bvh_root){
+      d_render<<<blocks, threads>>>(ptr_device_img, cam, d_rand_state, config, ptr_device_vertices, ptr_device_triangles, index_count, ptr_device_normals, bvh_root);
       checkCudaErrors(cudaDeviceSynchronize());
       return ptr_device_img;
     }
