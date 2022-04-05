@@ -54,6 +54,7 @@ int main(int argc, char *argv[]){
   int image_width = 512;
   int max_bounces = 5;
   char* output_filename = "output.ppm";
+  int bvh_type = 1;
 
   // ----------- CL ARGUMENTS  -----------
   for (size_t i = 2; i < argc; i+=2){
@@ -71,6 +72,10 @@ int main(int argc, char *argv[]){
       image_height = atoi(parameter);
     if(!strcmp(flag, "--max-depth"))
       max_bounces = atoi(parameter);
+    if(!strcmp(flag, "-bvh")){
+      bvh_type = atoi(parameter);
+    }
+      
   }
 
   // ----------- LOAD SCENE  -----------
@@ -101,11 +106,8 @@ int main(int argc, char *argv[]){
   int poly_count = indices_count / 3;
   printf("\t# triangles       = %d\n\n", poly_count);
 
-
-  //Calculate scene bounding box. This is not strictly required if we make sure to resolve duplicate codes.
-  //Although it likely will lead to better quality structure.
-  Vec3 min_bounds = Vec3( 10000000.0, 10000000.0,   10000000.0);
-  Vec3 max_bounds = Vec3(-10000000.0,-10000000.0,  -10000000.0);
+  Vec3 min_bounds = Vec3( 100000000.0, 100000000.0,   100000000.0);
+  Vec3 max_bounds = Vec3(-100000000.0,-100000000.0,  -100000000.0);
 
   for (int i = 0; i < attrib.vertices.size(); i+=3){
     float x = attrib.vertices[i  ];
@@ -125,6 +127,11 @@ int main(int argc, char *argv[]){
   //The Obj reader does not store vertex indices in contiguous memory.
   //Copy the indices into a block of memory on the host device.
   Triangle *ptr_host_triangles = (Triangle*)malloc(sizeof(Triangle) * poly_count);
+
+  float inv_min_max_x = 1.0/(max_bounds.x() - min_bounds.x());
+  float inv_min_max_y = 1.0/(max_bounds.y() - min_bounds.y());
+  float inv_min_max_z = 1.0/(max_bounds.z() - min_bounds.z());
+
   for (int i = 0; i < indices_count; i+=3){
     Triangle tempTri = Triangle();
     int v0_index = shapes[0].mesh.indices[i  ].vertex_index;
@@ -152,11 +159,11 @@ int main(int argc, char *argv[]){
 
     Vec3 centroid = (v0 + v1 + v2) / 3;
 
-    // printf("Centroid: (%f, %f, %f)\n", centroid.x(), centroid.y(), centroid.z());           // @debug
-    centroid.e[0] = (centroid.x() - min_bounds.x()) / (max_bounds.x() - min_bounds.x());
-    centroid.e[1] = (centroid.y() - min_bounds.y()) / (max_bounds.y() - min_bounds.y());
-    centroid.e[2] = (centroid.z() - min_bounds.z()) / (max_bounds.z() - min_bounds.z());
-    // printf("Centroid: (%f, %f, %f)\n\n", centroid.x(), centroid.y(), centroid.z());         // @debug
+    //Remap centroid coordinates to a 0..1 unit cube.
+    centroid.e[0] = (centroid.x() - min_bounds.x()) * inv_min_max_x;
+    centroid.e[1] = (centroid.y() - min_bounds.y()) * inv_min_max_y;
+    centroid.e[2] = (centroid.z() - min_bounds.z()) * inv_min_max_z;
+
     tempTri.morton_code = mortonCode(centroid);
     tempTri.aabb.min_bounds = min(v2, min(v0, v1)); //TODO: This should not happen here? This should be in lbvh::calculateAABB()
     tempTri.aabb.max_bounds = max(v2, max(v0, v1));
@@ -187,18 +194,26 @@ int main(int argc, char *argv[]){
   Node* ptr_device_tree = bvh.construct();
 
   // ----------- RENDER -----------
-  // RenderConfig config(image_width, image_height, samples_per_pixel, max_bounces, 1337);
-  // Camera cam = Camera(config.img_width, config.img_height, 90.0f, 1.0f, Vec3(0,0,0));
-  // Raytracer raytracer = Raytracer(config, ptr_device_vertices, ptr_device_normals, ptr_device_triangles, indices_count);
-  // printf("Starting rendering...\n");
-  // Vec3* ptr_device_img = raytracer.render(cam);
-  // printf("Render complete.\n");
+  RenderConfig config(image_width, image_height, samples_per_pixel, max_bounces, 1337);
+  Camera cam = Camera(config.img_width, config.img_height, 90.0f, 1.0f, Vec3(0,0,0));
+  Raytracer raytracer = Raytracer(config, ptr_device_vertices, ptr_device_normals, ptr_device_triangles, indices_count);
+  printf("Starting rendering...\n");
+  Vec3* ptr_device_img = nullptr;
+  switch(bvh_type){
+    case 0:
+      ptr_device_img = raytracer.render(cam);
+      break;
+    case 1:
+      ptr_device_img = raytracer.renderBVH(ptr_device_tree, cam);
+      break;
+  }
+  printf("Render complete.\n");
 
-  // //Copy framebuffer to host and save to disk.
-  // Image render_output = Image(config.img_width, config.img_height);
-  // render_output.copyFromDevice(ptr_device_img, config.img_height * config.img_width);
-  // render_output.save(output_filename);
-  // printf("%s saved to disk.\n", output_filename);
+  //Copy framebuffer to host and save to disk.
+  Image render_output = Image(config.img_width, config.img_height);
+  render_output.copyFromDevice(ptr_device_img, config.img_height * config.img_width);
+  render_output.save(output_filename);
+  printf("%s saved to disk.\n", output_filename);
 
   free(ptr_host_triangles);
   checkCudaErrors(cudaFree(ptr_device_triangles));

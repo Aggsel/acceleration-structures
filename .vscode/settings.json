@@ -64,6 +64,7 @@
         "future": "cpp",
         "iomanip": "cpp",
         "xlocmon": "cpp",
-        "xloctime": "cpp"
+        "xloctime": "cpp",
+        "__undef_macros": "cpp"
     }
 }

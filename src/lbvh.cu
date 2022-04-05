@@ -9,6 +9,14 @@ __device__ int2 determineRange(Triangle *sorted_morton_codes, int total_primitiv
 __device__ int findSplit(Triangle *sorted_morton_codes, int first, int last);
 __global__ void calculateAABB(Node* internal_nodes, Triangle* leaf_nodes, int leaf_count, Vec3* vert_buff);
 
+__device__ int commonPrefix(Triangle *morton_codes, int index1, int index2){
+  unsigned int key1 = morton_codes[index1].morton_code;
+  unsigned int key2 = morton_codes[index2].morton_code;
+  if(key1 != key2)
+    return __clz(key1 ^ key2);
+  return __clz(index1 ^ index2);
+}
+
 __device__ int2 determineRange(Triangle *sorted_morton_codes, int total_primitives, int node_index){
   //Time complexity of the algorithm is proportional to the number of keys covered by the nodes.
   //The widest node is also one that we know in advance:
@@ -21,46 +29,25 @@ __device__ int2 determineRange(Triangle *sorted_morton_codes, int total_primitiv
 
   //Determine direction (d).
   //Delta being the number of largest common bits between two keys.
-  int current_code = sorted_morton_codes[node_index].morton_code;
-  //BUG: Properly handle out of bounds exceptions. (branchless? :O)
-  int prev_code = sorted_morton_codes[node_index-1].morton_code;
-  int next_code = sorted_morton_codes[node_index+1].morton_code;
-
-  //BUG: Prevent duplicate morton codes.
-  if(prev_code == current_code)
-    prev_code = prev_code ^ node_index-1;
-  if(next_code == current_code)
-    next_code = next_code ^ node_index+1;
-
-  int next_delta = __clz(current_code ^ next_code);
-  int prev_delta = __clz(current_code ^ prev_code);
+  int next_delta = commonPrefix(sorted_morton_codes, node_index, node_index+1);
+  int prev_delta = commonPrefix(sorted_morton_codes, node_index, node_index-1);
   int d = next_delta - prev_delta < 0 ? -1 : 1;
 
-  if(next_code == current_code || prev_code == current_code)
-    printf("@BVH::determineRange()\tDuplicate morton codes found.\n");
-
   //Compute upper bound for the length of the range.
-  //TODO: __Note from Karras 2012__:
-  //      When searching for lmax on
-  //      lines 5–8, we have found that it is beneficial to start from a
-  //      larger number, e.g. 128, and multiply the value by 4 instead
-  //      of 2 after each iteration to reduce the total amount of work.
-
-  int lmax = 2;
+  int lmax = 128;
   int delta_min = min(next_delta, prev_delta);
   int delta = -1;
   int i = node_index + d * lmax;
   if(i >= 0 && i < total_primitives){
-    if(current_code != sorted_morton_codes[i].morton_code)
-      delta = __clz(current_code ^ sorted_morton_codes[i].morton_code);
+    delta = commonPrefix(sorted_morton_codes, node_index, i);
   }
 
   while(delta > delta_min){
-      lmax = lmax << 1;
-      i = node_index + d * lmax;
-      delta = -1;
-      if(0 <= i && i < total_primitives)
-          delta = __clz(current_code ^ sorted_morton_codes[i].morton_code);
+    lmax = lmax << 2;
+    i = node_index + d * lmax;
+    delta = -1;
+    if(0 <= i && i < total_primitives)
+      delta = commonPrefix(sorted_morton_codes, node_index, i);
   }
 
   //Binary search for the other end.
@@ -69,12 +56,13 @@ __device__ int2 determineRange(Triangle *sorted_morton_codes, int total_primitiv
   while(t > 0){
     i = node_index + (l + t) * d;
     delta = -1;
-    if(0 <= i && i < total_primitives){
-        delta = __clz(current_code ^ sorted_morton_codes[i].morton_code);
-    }
-    if(delta > delta_min){
-        l += t;
-    }
+
+    if(0 <= i && i < total_primitives)
+      delta = commonPrefix(sorted_morton_codes, node_index, i);
+
+    if(delta > delta_min)
+      l += t;
+
     t = t >> 1;
   }
   unsigned int j = node_index + l * d;
@@ -94,7 +82,7 @@ __device__ int findSplit(Triangle *sorted_morton_codes, int first, int last){
     return (first + last) >> 1;
 
   //count leading zeros
-  int common_prefix = __clz(first_morton ^ last_morton);
+  int common_prefix = commonPrefix(sorted_morton_codes, first, last);
 
   // Use binary search to find where the next bit differs.
   // Specifically, we are looking for the highest object that
@@ -107,8 +95,7 @@ __device__ int findSplit(Triangle *sorted_morton_codes, int first, int last){
     int new_split = split + step;
 
     if (new_split < last){
-      int split_morton = sorted_morton_codes[new_split].morton_code;
-      int split_prefix = __clz(first_morton ^ split_morton);
+      int split_prefix = commonPrefix(sorted_morton_codes, first, new_split);
       if (split_prefix > common_prefix)
         split = new_split;
     }
@@ -192,15 +179,11 @@ __global__ void calculateAABB(Node* internal_nodes, Node* leaf_nodes, int leaf_c
   Node* parent_node = leaf_nodes[leaf_index].parent;
   assert(parent_node != nullptr);
 
-  parent_node->aabb = leaf_aabb; //BUG: <- sometimes cudaErrorIllegalAddress
+  parent_node->aabb = leaf_aabb; //BUG: <- sometimes cudaErrorIllegalAddress, due to duplicate morton codes.
 
   while(true){
-    if(parent_node == nullptr){   //Root reached, return.
-      // AABB aabb = internal_nodes[0].aabb; //@debug
-      // printf("@BVH::constructAABB() \tinternal_nodes: 0x%p Min Bounds: (%f,\t%f,\t%f)\n", internal_nodes, aabb.min_bounds.x(), aabb.min_bounds.y(), aabb.min_bounds.z());  //@debug
-      // printf("@BVH::constructAABB() \tinternal_nodes: 0x%p Max Bounds: (%f,\t%f,\t%f)\n", internal_nodes, aabb.max_bounds.x(), aabb.max_bounds.y(), aabb.max_bounds.z());  //@debug
+    if(parent_node == nullptr)  //Root reached.
       return;
-    }
 
     int parent_index = parent_node - internal_nodes;
     int old = atomicCAS(&counter[parent_index], 0, 1);
@@ -210,9 +193,6 @@ __global__ void calculateAABB(Node* internal_nodes, Node* leaf_nodes, int leaf_c
 
     parent_node->aabb = AABB::join(parent_node->left_child->aabb,
                                         parent_node->right_child->aabb);
-
-    if(parent_node->parent == nullptr)   //Parent does not exist, we should be at the root.
-      printf("\nRoot found. Final loop iteration. Device adress: 0x%p\n", parent_node);
 
     parent_node = parent_node->parent;
   }
@@ -289,8 +269,6 @@ class BVH{
   int* ptr_device_visited_node_counters;
 
   public:
-  //BUG: We have no guarantee that the triangle or vertex pointer can be dereferenced 
-  //     safely for the entire lifetime of this object.
   BVH(Triangle* ptr_device_triangles, int triangle_count, Vec3* ptr_device_vertices, int vertex_count){
     this->ptr_device_triangles = ptr_device_triangles;
     this->triangle_count = triangle_count;
@@ -310,8 +288,6 @@ class BVH{
   }
 
   ~BVH(){
-    //BUG: We might want to leave the responsibility of deallocation to the caller of BVH::construct().
-    //     This could result in a nullpt when trying to access the tree.
     checkCudaErrors(cudaFree(ptr_device_internal_nodes));
     checkCudaErrors(cudaFree(ptr_device_leaf_nodes));
     checkCudaErrors(cudaFree(ptr_device_visited_node_counters));
@@ -321,22 +297,23 @@ class BVH{
   Node* construct(){
     //TODO: Move morton code generation, scene bounding box calculation etc to this function.
     // <<<x,y>>> Launches x thread blocks with y threads per block.
-    const int threads_per_block = 64;
+    const int threads_per_block = 512;
 
     constructLBVH<<<(triangle_count-1)/threads_per_block+1, threads_per_block>>>(ptr_device_triangles, ptr_device_internal_nodes, ptr_device_leaf_nodes, triangle_count);
-    checkCudaErrors(cudaDeviceSynchronize());
-
-    printInternalNodes<<<(triangle_count-1)/threads_per_block+1, threads_per_block>>>(ptr_device_internal_nodes, triangle_count, ptr_device_triangles);
-    checkCudaErrors(cudaDeviceSynchronize());
-    printLeafNodes<<<triangle_count/threads_per_block+1, threads_per_block>>>(ptr_device_leaf_nodes, triangle_count, ptr_device_triangles);
     checkCudaErrors(cudaDeviceSynchronize());
 
     calculateAABB<<<triangle_count/threads_per_block+1, threads_per_block>>>(ptr_device_internal_nodes, ptr_device_leaf_nodes, triangle_count, ptr_device_vertices, ptr_device_visited_node_counters);
     checkCudaErrors(cudaDeviceSynchronize());
 
-    traverseTree<<<1,1>>>(ptr_device_internal_nodes);
-    checkCudaErrors(cudaDeviceSynchronize());
+    // --- @Debug purposes ---
+    // printInternalNodes<<<(triangle_count-1)/threads_per_block+1, threads_per_block>>>(ptr_device_internal_nodes, triangle_count, ptr_device_triangles);
+    // checkCudaErrors(cudaDeviceSynchronize());
+    // printLeafNodes<<<triangle_count/threads_per_block+1, threads_per_block>>>(ptr_device_leaf_nodes, triangle_count, ptr_device_triangles);
+    // checkCudaErrors(cudaDeviceSynchronize());
+    // traverseTree<<<1,1>>>(ptr_device_internal_nodes);
+    // checkCudaErrors(cudaDeviceSynchronize());
 
+    printf("LBVH Construction completed.\n");
     return ptr_device_internal_nodes;
   }
 };

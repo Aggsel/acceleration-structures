@@ -6,12 +6,44 @@
 #include "raytracer/render_config.h"
 #include "third_party/cuda_helpers/helper_cuda.h"
 
-__global__ void render_kernel(Vec3 *image, int image_width, int image_height, Vec3 horizontal, Vec3 vertical, Vec3 lower_left_corner, curandState *rand, RenderConfig config, Vec3 *vertices, Triangle *triangles, int vertex_count, Vec3 *normals);
+__global__ void render_kernel(Vec3 *output_image, Camera cam, curandState *rand, RenderConfig config, Vec3 *vertices, Triangle *triangles, int vertex_count, Vec3 *normals);
+__global__ void renderBVH_kernel(Vec3 *output_image, Node* bvh_root, Camera cam, curandState *rand, RenderConfig config, Vec3 *vertices, Triangle *triangles, int vertex_count, Vec3 *normals);
 __global__ void init_kernels(int image_width, int image_height, curandState *rand);
 __device__ Vec3 color(Ray *ray, curandState *rand, int max_depth, Vec3 *vertices, Triangle *triangles, int vertex_count, Vec3 *normals);
+__device__ Vec3 colorBVH(Ray *ray, curandState *rand, Node* bvh_root, int max_depth, Vec3 *vertices, int vertex_count, Vec3 *normals);
 __device__ Vec3 randomInUnitSphere(curandState *rand);
 __device__ bool intersectTri(Ray *ray, RayHit *bestHit, Vec3 v0, Vec3 v1, Vec3 v2, Vec3 n0, Vec3 n1, Vec3 n2);
 __device__ bool intersectSphere(Ray *ray, RayHit *bestHit, Vec3 point, float radius);
+
+__global__ void renderBVH_kernel(Vec3 *output_image, Node* bvh_root, Camera cam, curandState *rand, RenderConfig config, Vec3 *vertices, Triangle *triangles, int vertex_count, Vec3 *normals){
+  int pixel_x = threadIdx.x + blockIdx.x * blockDim.x;
+  int pixel_y = threadIdx.y + blockIdx.y * blockDim.y;
+  if((pixel_x >= config.img_width) || (pixel_y >= config.img_height)) return;
+  int pixel_index = pixel_y*config.img_width + pixel_x;
+
+  curandState local_rand = rand[pixel_index];
+
+  Vec3 result = Vec3(0.0, 0.0, 0.0);
+  for (int i = 0; i < config.samples_per_pixel; i++){
+    Vec2 uv = Vec2((pixel_x + curand_uniform(&local_rand)) / (config.img_width-1), (pixel_y+ curand_uniform(&local_rand)) / (config.img_height-1));
+    Ray ray = Ray(Vec3(0,0,0), normalize(cam.lower_left_corner + uv.x()*cam.horizontal + uv.y()*cam.vertical - Vec3(0,0,0)) );
+    Vec3 out_col = colorBVH(&ray, &local_rand, bvh_root, config.max_bounces, vertices, vertex_count, normals);
+
+    float r = clamp01(out_col.x());
+    float g = clamp01(out_col.y());
+    float b = clamp01(out_col.z());
+    result = result + Vec3(r,g,b);
+  }
+  
+  //Gamma correction
+  float scale = 1.0 / config.samples_per_pixel;
+  float r = sqrt(scale * result.x());
+  float g = sqrt(scale * result.y());
+  float b = sqrt(scale * result.z());
+  result = Vec3(r,g,b);
+
+  output_image[pixel_index] = result;
+}
 
 __global__ void render_kernel(Vec3 *output_image, Camera cam, curandState *rand, RenderConfig config, Vec3 *vertices, Triangle *triangles, int vertex_count, Vec3 *normals){
   int pixel_x = threadIdx.x + blockIdx.x * blockDim.x;
@@ -55,12 +87,110 @@ __global__ void initKernels(int image_width, int image_height, unsigned long lon
   curand_init(rand_seed, pixel_index, 0, &rand[pixel_index]);
 }
 
+__device__ Vec3 colorBVH(Ray *ray, curandState *rand, Node* bvh_root, int max_depth, Vec3 *vertices, int vertex_count, Vec3 *normals) {
+  float cur_attenuation = 1.0f;
+  
+  for(int i = 0; i < max_depth; i++) {
+    Node* stack[128];
+    int stack_index = -1;
+    stack_index++;
+    stack[stack_index] = nullptr;
+
+    int nodes_traversed = 0;
+    Node* node = bvh_root;
+
+    bool was_hit = false;
+    RayHit hit;
+
+    do{
+      Node* left_child = node->left_child;
+      Node* right_child = node->right_child;
+
+      bool left_aabb_intersect = left_child->aabb.intersect_ray(*ray);
+      bool right_aabb_intersect = right_child->aabb.intersect_ray(*ray);
+
+      if(left_aabb_intersect && left_child->isLeaf){
+        Triangle leaf_primitive = *left_child->primitive;
+        int v0 = leaf_primitive.v0_index;
+        int v1 = leaf_primitive.v1_index;
+        int v2 = leaf_primitive.v2_index;
+
+        RayHit temp_hit;
+        if (intersectTri(ray, &temp_hit, vertices[v0], vertices[v1], vertices[v2],
+                                        normals [v0], normals [v1], normals [v2])){
+          if(temp_hit.dist < hit.dist){
+            hit.dist = temp_hit.dist;
+            hit.normal = temp_hit.normal;
+            hit.pos = temp_hit.pos;
+            hit.uv = temp_hit.uv;
+            was_hit = true;
+          }
+        }
+      }
+      if(right_aabb_intersect && right_child->isLeaf){
+        Triangle leaf_primitive = *right_child->primitive;
+        int v0 = leaf_primitive.v0_index;
+        int v1 = leaf_primitive.v1_index;
+        int v2 = leaf_primitive.v2_index;
+
+        RayHit temp_hit;
+        if (intersectTri(ray, &temp_hit, vertices[v0], vertices[v1], vertices[v2],
+                                        normals [v0], normals [v1], normals [v2])){
+          if(temp_hit.dist < hit.dist){
+            hit.dist = temp_hit.dist;
+            hit.normal = temp_hit.normal;
+            hit.pos = temp_hit.pos;
+            hit.uv = temp_hit.uv;
+            was_hit = true;
+          }
+        }
+      }
+
+      //Only continue traversing children if they're no leaves.
+      //TODO: This is where we can check for ray aabb intersections.
+      bool traverse_left = (!left_child->isLeaf) && left_aabb_intersect;
+      bool traverse_right = (!right_child->isLeaf) && right_aabb_intersect;
+
+      if(!traverse_left && !traverse_right){
+        node = stack[stack_index];
+        stack_index--;
+      }
+      else{
+        //Prioritize traversing left branch.
+        node = traverse_left ? left_child : right_child;
+
+        //Push right child onto the stack if both branches should be traversed.
+        if (traverse_left && traverse_right){
+          stack_index++;
+          stack[stack_index] = right_child;
+        }
+      }
+      nodes_traversed++;
+    }while(node != nullptr);
+
+    if(was_hit){
+      Vec3 target = hit.pos + hit.normal + randomInUnitSphere(rand);
+      cur_attenuation *= 0.5f;
+      ray->org = hit.pos;
+      ray->dir = normalize(target - hit.pos);
+      continue;
+    }
+    else {
+      Vec3 unit_direction = normalize(ray->direction());
+      float t = 0.5f*(unit_direction.y() + 1.0f);
+      Vec3 c = (1.0f-t)*Vec3(1.0, 1.0, 1.0) + t*Vec3(0.5, 0.7, 1.0);
+      return cur_attenuation * c;
+    }
+  }
+  return Vec3(0.0, 0.0, 0.0);
+}
+
 __device__ Vec3 color(Ray *ray, curandState *rand, int max_depth, Vec3 *vertices, Triangle *triangles, int vertex_count, Vec3 *normals) {
   float cur_attenuation = 1.0f;
   for(int i = 0; i < max_depth; i++) {
     RayHit hit;
     bool was_hit = false;
-    for (int j = 0; j < vertex_count/3; j++){ //TODO: Traverse acceleration structure.
+    for (int j = 0; j < vertex_count/3; j++){
       RayHit tempHit;
 
       if (!intersectTri(ray, &tempHit,  vertices[triangles[j].v0_index],
@@ -111,7 +241,7 @@ __device__ Vec3 randomInUnitSphere(curandState *rand){
 }
 
 /* From Möller & Trumbore, Fast, Minimum Storage Ray/Triangle Intersection */
-__device__ bool intersectTri(Ray *ray, RayHit *bestHit, Vec3 v0, Vec3 v1, Vec3 v2, Vec3 n0, Vec3 n1, Vec3 n2){
+__device__ bool intersectTri(Ray *ray, RayHit *hit, Vec3 v0, Vec3 v1, Vec3 v2, Vec3 n0, Vec3 n1, Vec3 n2){
   Vec3 edge1 = v1 - v0;
   Vec3 edge2 = v2 - v0;
 
@@ -122,21 +252,21 @@ __device__ bool intersectTri(Ray *ray, RayHit *bestHit, Vec3 v0, Vec3 v1, Vec3 v
     return false;
   
   Vec3 tvec = ray->origin() - v0;
-  bestHit->uv.e[0] = dot(tvec, pvec);
-  if(bestHit->uv.x() < 0.0 || bestHit->uv.x() > det)
+  hit->uv.e[0] = dot(tvec, pvec);
+  if(hit->uv.x() < 0.0 || hit->uv.x() > det)
     return false;
 
   Vec3 qvec = cross(tvec, edge1);
-  bestHit->uv.e[1] = dot(ray->direction(), qvec);
-  if(bestHit->uv.y() < 0.0 || bestHit->uv.x() + bestHit->uv.y() > det)
+  hit->uv.e[1] = dot(ray->direction(), qvec);
+  if(hit->uv.y() < 0.0 || hit->uv.x() + hit->uv.y() > det)
     return false;
 
   float inv_det = 1.0 / det;
-  bestHit->dist = dot(edge2, qvec) * inv_det;
-  bestHit->uv.e[0] *= inv_det;
-  bestHit->uv.e[1] *= inv_det;
-  bestHit->normal = normalize(cross(edge1, edge2));
-  bestHit->pos = ray->point_along_ray(bestHit->dist);
+  hit->dist = dot(edge2, qvec) * inv_det;
+  hit->uv.e[0] *= inv_det;
+  hit->uv.e[1] *= inv_det;
+  hit->normal = normalize(cross(edge1, edge2));
+  hit->pos = ray->point_along_ray(hit->dist);
 
   //BUG: There's something funky with the normals when interpolating...
   // bestHit->normal = normalize(bestHit->uv.x()*n1 + bestHit->uv.y() * n2 + (1.0 - bestHit->uv.x() - bestHit->uv.y()) * n0);
@@ -207,5 +337,11 @@ class Raytracer{
         render_kernel<<<blocks, threads>>>(ptr_device_img, cam, d_rand_state, config, ptr_device_vertices, ptr_device_triangles, index_count, ptr_device_normals);
         checkCudaErrors(cudaDeviceSynchronize());
         return ptr_device_img;
+    }
+
+    Vec3* renderBVH(Node* bvh_root, Camera cam){
+      renderBVH_kernel<<<blocks, threads>>>(ptr_device_img, bvh_root, cam, d_rand_state, config, ptr_device_vertices, ptr_device_triangles, index_count, ptr_device_normals);
+      checkCudaErrors(cudaDeviceSynchronize());
+      return ptr_device_img;
     }
 };

@@ -27,14 +27,20 @@ Although will likely still work on older versions.
         Defaults to: 30
 
     -iw, --image-width <int>
-        Resulting image width (default 512)
+        Resulting image width.
         Defaults to: 512
 
     -ih, --image-height <int>
-        Resulting image height (default 512)
+        Resulting image height.
         Defaults to: 512
 
     --max-depth
         Specify maximum number of per ray bounces allowed during raytracing.
         Defaults to: 5
+
+    -bvh <int>
+        Specify which acceleration structure to use.
+        Defaults to: 1
+            0 - No acceleration structure, brute force ray triangle intersections.
+            1 - Karras (2012), LBVH.
 ```
