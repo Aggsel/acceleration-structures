@@ -48,6 +48,7 @@ class Image{
             }
         }
         fclose(fp);
+        printf("%s saved to disk.\n", filename);
         return true;
     }
 };

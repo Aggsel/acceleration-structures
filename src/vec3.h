@@ -42,6 +42,9 @@ __host__ __device__ Vec3 operator*(float lhs, Vec3 rhs){
 __host__ __device__ Vec3 operator/(Vec3 lhs, float rhs){
   return Vec3(lhs.x()/rhs, lhs.y()/rhs, lhs.z()/rhs);
 }
+__host__ __device__ Vec3 operator/(float lhs, Vec3 rhs){
+  return Vec3(lhs/rhs.x(), lhs/rhs.y(), lhs/rhs.z());
+}
 __host__ __device__ Vec3 operator+(Vec3 lhs, Vec3 rhs){
   return Vec3(lhs.x()+rhs.x(), lhs.y()+rhs.y(), lhs.z()+rhs.z());
 }

@@ -3,7 +3,6 @@
 #define EPSILON 0.000001
 
 #include <iostream>
-#include <thrust/sort.h>
 
 #include "aabb.h"
 #include "node.h"
@@ -20,32 +19,12 @@
 #include "math_util.h"
 
 #include "lbvh.cu"
+#include "sahbvh.cu"
 
 #include "third_party/cuda_helpers/helper_cuda.h"      //checkCudaErrors
 #include "third_party/tiny_obj_loader.h"
 
-// Expands a 10-bit integer into 30 bits
-// by inserting 2 zeros after each bit.
-__device__ __host__ inline unsigned int expandBits(unsigned int v){
-  v = (v * 0x00010001u) & 0xFF0000FFu;
-  v = (v * 0x00000101u) & 0x0F00F00Fu;
-  v = (v * 0x00000011u) & 0xC30C30C3u;
-  v = (v * 0x00000005u) & 0x49249249u;
-  return v;
-}
-
-//Expects an input Vec3(0..1, 0..1, 0..1)
-__device__ __host__ unsigned int mortonCode(Vec3 v){
-  //Clamp coordinates to 10 bits.
-  float x = min(max(v.x() * 1024.0f, 0.0f), 1023.0f);
-  float y = min(max(v.y() * 1024.0f, 0.0f), 1023.0f);
-  float z = min(max(v.z() * 1024.0f, 0.0f), 1023.0f);
-  //Bit shift componentwise before merging bits into morton code.
-  unsigned int xx = expandBits((unsigned int)x) << 2;
-  unsigned int yy = expandBits((unsigned int)y) << 1;
-  unsigned int zz = expandBits((unsigned int)z);
-  return xx | yy | zz;
-}
+enum BVH_Type{ none, lbvh, sahbvh };
 
 int main(int argc, char *argv[]){
   std::string filename = "sample_models/large_210.obj";
@@ -54,7 +33,7 @@ int main(int argc, char *argv[]){
   int image_width = 512;
   int max_bounces = 5;
   char* output_filename = "output.ppm";
-  int bvh_type = 1;
+  BVH_Type bvh_type = lbvh;
 
   // ----------- CL ARGUMENTS  -----------
   for (size_t i = 2; i < argc; i+=2){
@@ -73,9 +52,8 @@ int main(int argc, char *argv[]){
     if(!strcmp(flag, "--max-depth"))
       max_bounces = atoi(parameter);
     if(!strcmp(flag, "-bvh")){
-      bvh_type = atoi(parameter);
+      bvh_type = (BVH_Type)atoi(parameter);
     }
-      
   }
 
   // ----------- LOAD SCENE  -----------
@@ -106,6 +84,7 @@ int main(int argc, char *argv[]){
   int poly_count = indices_count / 3;
   printf("\t# triangles       = %d\n\n", poly_count);
 
+  // ------------ Scene bounding box -----------------
   Vec3 min_bounds = Vec3( 100000000.0, 100000000.0,   100000000.0);
   Vec3 max_bounds = Vec3(-100000000.0,-100000000.0,  -100000000.0);
 
@@ -121,17 +100,15 @@ int main(int argc, char *argv[]){
     max_bounds.e[1] = max(max_bounds.y(), y);
     max_bounds.e[2] = max(max_bounds.z(), z);
   }
+  AABB scene_bounding_box(min_bounds, max_bounds);
   printf("Scene bounds calculated...\n\tMin Bounds: (%f, %f, %f)\n", min_bounds.x(), min_bounds.y(), min_bounds.z());
   printf("\tMax Bounds: (%f, %f, %f)\n", max_bounds.x(), max_bounds.y(), max_bounds.z());  
 
+
   //The Obj reader does not store vertex indices in contiguous memory.
   //Copy the indices into a block of memory on the host device.
+  //This is required beforehand regardless och BVH construction method.
   Triangle *ptr_host_triangles = (Triangle*)malloc(sizeof(Triangle) * poly_count);
-
-  float inv_min_max_x = 1.0/(max_bounds.x() - min_bounds.x());
-  float inv_min_max_y = 1.0/(max_bounds.y() - min_bounds.y());
-  float inv_min_max_z = 1.0/(max_bounds.z() - min_bounds.z());
-
   for (int i = 0; i < indices_count; i+=3){
     Triangle tempTri = Triangle();
     int v0_index = shapes[0].mesh.indices[i  ].vertex_index;
@@ -140,33 +117,6 @@ int main(int argc, char *argv[]){
     tempTri.v0_index = v0_index;
     tempTri.v1_index = v1_index;
     tempTri.v2_index = v2_index;
-
-    //TODO @Perf: The morton code generation could easily be done on the GPU instead.
-    tinyobj::index_t idx = shapes[0].mesh.indices[i];
-    Vec3 v0 = Vec3( attrib.vertices[3*size_t(idx.vertex_index)+0], 
-                    attrib.vertices[3*size_t(idx.vertex_index)+1], 
-                    attrib.vertices[3*size_t(idx.vertex_index)+2] );
-
-    idx = shapes[0].mesh.indices[i+1];
-    Vec3 v1 = Vec3( attrib.vertices[3*size_t(idx.vertex_index)+0], 
-                    attrib.vertices[3*size_t(idx.vertex_index)+1], 
-                    attrib.vertices[3*size_t(idx.vertex_index)+2] );
-
-    idx = shapes[0].mesh.indices[i+2];
-    Vec3 v2 = Vec3( attrib.vertices[3*size_t(idx.vertex_index)+0], 
-                    attrib.vertices[3*size_t(idx.vertex_index)+1], 
-                    attrib.vertices[3*size_t(idx.vertex_index)+2] );
-
-    Vec3 centroid = (v0 + v1 + v2) / 3;
-
-    //Remap centroid coordinates to a 0..1 unit cube.
-    centroid.e[0] = (centroid.x() - min_bounds.x()) * inv_min_max_x;
-    centroid.e[1] = (centroid.y() - min_bounds.y()) * inv_min_max_y;
-    centroid.e[2] = (centroid.z() - min_bounds.z()) * inv_min_max_z;
-
-    tempTri.morton_code = mortonCode(centroid);
-    tempTri.aabb.min_bounds = min(v2, min(v0, v1)); //TODO: This should not happen here? This should be in lbvh::calculateAABB()
-    tempTri.aabb.max_bounds = max(v2, max(v0, v1));
     ptr_host_triangles[i/3] = tempTri;
   }
 
@@ -184,14 +134,9 @@ int main(int argc, char *argv[]){
   cudaMemcpy(ptr_device_normals, attrib.normals.data(), normals_count * sizeof(Vec3), cudaMemcpyHostToDevice);
 
 
-  // ----------- SORT -----------
-  // Sorts the triangle buffer based on the computed morton codes. (using < overloading from the triangle struct).
-  thrust::sort(thrust::device, ptr_device_triangles, ptr_device_triangles+poly_count);
-
-
   // ----------- CONSTRUCT Karras 2012 -----------
-  BVH bvh(ptr_device_triangles, poly_count, ptr_device_vertices, vertex_count);
-  Node* ptr_device_tree = bvh.construct();
+  LBVH lbvh(ptr_device_triangles, poly_count, ptr_device_vertices, vertex_count, scene_bounding_box);
+  Node* ptr_device_tree = lbvh.construct();
 
   // ----------- RENDER -----------
   RenderConfig config(image_width, image_height, samples_per_pixel, max_bounces, 1337);
@@ -200,10 +145,10 @@ int main(int argc, char *argv[]){
   printf("Starting rendering...\n");
   Vec3* ptr_device_img = nullptr;
   switch(bvh_type){
-    case 0:
+    case BVH_Type::none:
       ptr_device_img = raytracer.render(cam);
       break;
-    case 1:
+    case BVH_Type::lbvh || BVH_Type::sahbvh:
       ptr_device_img = raytracer.renderBVH(ptr_device_tree, cam);
       break;
   }
@@ -213,7 +158,6 @@ int main(int argc, char *argv[]){
   Image render_output = Image(config.img_width, config.img_height);
   render_output.copyFromDevice(ptr_device_img, config.img_height * config.img_width);
   render_output.save(output_filename);
-  printf("%s saved to disk.\n", output_filename);
 
   free(ptr_host_triangles);
   checkCudaErrors(cudaFree(ptr_device_triangles));
