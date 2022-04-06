@@ -302,7 +302,7 @@ class LBVH{
     //2. Sort scene primitives along morton curve.
     thrust::sort(thrust::device, ptr_device_triangles, ptr_device_triangles+triangle_count);
 
-    //3. For each internal node in the tree, calculate it's range and children.
+    //3. For each internal node in the tree, calculate it's range and split/children.
     constructLBVH<<<(triangle_count-1)/threads_per_block+1, threads_per_block>>>(ptr_device_triangles, ptr_device_internal_nodes, ptr_device_leaf_nodes, triangle_count);
     checkCudaErrors(cudaDeviceSynchronize());
 
