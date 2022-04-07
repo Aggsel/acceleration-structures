@@ -12,14 +12,20 @@ class AABB{
     }
     AABB() = default;
     __device__ __host__ void join(AABB otherAABB);
+    __device__ __host__ void join(Vec3 vec);
+    __device__ __host__ float surfaceArea();
     __device__ __host__ static AABB join(AABB aabb_1, AABB aabb_2);
     __device__ __host__ bool intersect_ray(Ray ray);
 };
 
-
 __device__ __host__ void AABB::join(AABB otherAABB){
     this->min_bounds = min(this->min_bounds, otherAABB.min_bounds);
     this->max_bounds = max(this->max_bounds, otherAABB.max_bounds);
+}
+
+__device__ __host__ void AABB::join(Vec3 vec){
+    this->min_bounds = min(this->min_bounds, vec);
+    this->max_bounds = max(this->max_bounds, vec);
 }
 
 __device__ __host__ AABB AABB::join(AABB aabb_1, AABB aabb_2){
@@ -27,6 +33,11 @@ __device__ __host__ AABB AABB::join(AABB aabb_1, AABB aabb_2){
     aabb.min_bounds = min(aabb_1.min_bounds, aabb_2.min_bounds);
     aabb.max_bounds = max(aabb_1.max_bounds, aabb_2.max_bounds);
     return aabb;
+}
+
+__device__ __host__ float AABB::surfaceArea(){
+    Vec3 size = this->max_bounds - this->min_bounds;
+    return size.x() * size.y() + size.x() * size.z() + size.y() * size.z() * 2;
 }
 
 //https://www.scratchapixel.com/lessons/3d-basic-rendering/minimal-ray-tracer-rendering-simple-shapes/ray-box-intersection

@@ -1,4 +1,5 @@
 #pragma once
+#include "vec3.h"
 
 struct Triangle{
   public:
@@ -7,6 +8,7 @@ struct Triangle{
   int v1_index;
   int v2_index;
   AABB aabb;
+  Vec3 centroid;
 };
 __host__ __device__ inline bool operator< (const Triangle& lhs, const Triangle& rhs){ return lhs.morton_code < rhs.morton_code; }
 __host__ __device__ inline bool operator> (const Triangle& lhs, const Triangle& rhs){ return rhs < lhs; }

@@ -305,14 +305,18 @@ class Raytracer{
     }
 
     Vec3* render(Camera cam){
-        d_render<<<blocks, threads>>>(ptr_device_img, cam, d_rand_state, config, ptr_device_vertices, ptr_device_triangles, index_count, ptr_device_normals);
-        checkCudaErrors(cudaDeviceSynchronize());
-        return ptr_device_img;
+      printf("Launching rendering kernel...\n");
+      d_render<<<blocks, threads>>>(ptr_device_img, cam, d_rand_state, config, ptr_device_vertices, ptr_device_triangles, index_count, ptr_device_normals);
+      checkCudaErrors(cudaDeviceSynchronize());
+      printf("Render complete.\n");
+      return ptr_device_img;
     }
 
     Vec3* render(Camera cam, Node* bvh_root){
+      printf("Launching rendering kernel...\n");
       d_render<<<blocks, threads>>>(ptr_device_img, cam, d_rand_state, config, ptr_device_vertices, ptr_device_triangles, index_count, ptr_device_normals, bvh_root);
       checkCudaErrors(cudaDeviceSynchronize());
+      printf("Render complete.\n");
       return ptr_device_img;
     }
 };

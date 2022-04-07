@@ -240,8 +240,8 @@ __global__ void calculateAABB(Node* internal_nodes, Node* leaf_nodes, int leaf_c
       return;
     }
 
-    parent_node->aabb = AABB::join(parent_node->left_child->aabb,
-                                        parent_node->right_child->aabb);
+    parent_node->aabb = AABB::join(parent_node->left_child ->aabb,
+                                   parent_node->right_child->aabb);
 
     parent_node = parent_node->parent;
   }

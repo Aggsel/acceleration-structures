@@ -15,6 +15,6 @@ namespace DebugHelper{
     void PrintNodes(Node* node_array, int size, Triangle* leaf_nodes){
         int threads_per_block = 512;
         d_printNodes<<<size/threads_per_block+1, threads_per_block>>>(node_array, size, leaf_nodes);
-        checkCudaErrors(cudaDeviceSynchronize());
+        cudaDeviceSynchronize();
     }
 }

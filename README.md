@@ -34,7 +34,7 @@ Although will likely still work on older versions.
         Resulting image height.
         Defaults to: 512
 
-    --max-depth
+    --max-depth <int>
         Specify maximum number of per ray bounces allowed during raytracing.
         Defaults to: 5
 
@@ -43,4 +43,11 @@ Although will likely still work on older versions.
         Defaults to: 1
             0 - No acceleration structure, brute force ray triangle intersections.
             1 - Karras (2012), LBVH.
+            2 - Wald (2007), SAH Binning.
+
+    -r, --render <int>
+        Whether or not to render the scene.
+        Defaults to: 1
+            0 - Do not render.
+            1 - Render.
 ```

@@ -9,6 +9,8 @@ struct Node{
   bool isLeaf;
 
   AABB aabb;
+  int start_range;
+  int range;
 
   Triangle* primitive;
 };

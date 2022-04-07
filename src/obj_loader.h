@@ -1,6 +1,7 @@
 #pragma once
 
 #include <iostream>
+#include <limits>
 #include "third_party/tiny_obj_loader.h"
 #include "vec3.h"
 #include "aabb.h"
@@ -10,16 +11,16 @@ class ObjLoader{
 	std::string filename;
 	tinyobj::ObjReaderConfig reader_config;
 	tinyobj::ObjReader reader;
-  tinyobj::attrib_t attrib;
+	tinyobj::attrib_t attrib;
 
-  AABB scene_bounding_box;
-  Triangle *ptr_host_triangles;
+	AABB scene_bounding_box;
+	Triangle *ptr_host_triangles;
 
 	public:
-  int vertex_count;
-  int index_count;
-  int normals_count;
-  int triangle_count;
+	int vertex_count;
+	int index_count;
+	int normals_count;
+	int triangle_count;
 
 	ObjLoader(std::string filename){
 		if (!reader.ParseFromFile(filename, reader_config)) {
@@ -48,20 +49,20 @@ class ObjLoader{
 		printf("\t# triangles       = %d\n\n", triangle_count);
 
 		// ------------ Scene bounding box -----------------
-		Vec3 min_bounds = Vec3( 100000000.0, 100000000.0,   100000000.0);
-		Vec3 max_bounds = Vec3(-100000000.0,-100000000.0,  -100000000.0);
+		Vec3 min_bounds(FLT_MAX, FLT_MAX, FLT_MAX);
+		Vec3 max_bounds(-FLT_MAX, -FLT_MAX, -FLT_MAX);
 
 		for (int i = 0; i < attrib.vertices.size(); i+=3){
-      float x = attrib.vertices[i  ];
-      float y = attrib.vertices[i+1];
-      float z = attrib.vertices[i+2];
-      min_bounds.e[0] = min(min_bounds.x(), x);
-      min_bounds.e[1] = min(min_bounds.y(), y);
-      min_bounds.e[2] = min(min_bounds.z(), z);
+			float x = attrib.vertices[i  ];
+			float y = attrib.vertices[i+1];
+			float z = attrib.vertices[i+2];
+			min_bounds.e[0] = min(min_bounds.x(), x);
+			min_bounds.e[1] = min(min_bounds.y(), y);
+			min_bounds.e[2] = min(min_bounds.z(), z);
 
-      max_bounds.e[0] = max(max_bounds.x(), x);
-      max_bounds.e[1] = max(max_bounds.y(), y);
-      max_bounds.e[2] = max(max_bounds.z(), z);
+			max_bounds.e[0] = max(max_bounds.x(), x);
+			max_bounds.e[1] = max(max_bounds.y(), y);
+			max_bounds.e[2] = max(max_bounds.z(), z);
 		}
 		scene_bounding_box = AABB::AABB(min_bounds, max_bounds);
 		printf("Scene bounds calculated...\n\tMin Bounds: (%f, %f, %f)\n", min_bounds.x(), min_bounds.y(), min_bounds.z());
