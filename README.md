@@ -5,7 +5,7 @@ Built on windows using:
 * MSVC (19.29)
 * CUDA (11.6)
 
-Although will likely still work on older versions.
+Although will likely still work on older versions. Requires a Nvidia GPU, Pascal architecture or later.
 
 ```bash
     nvcc src/main.cu -o build/main

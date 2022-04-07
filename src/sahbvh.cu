@@ -7,13 +7,20 @@
 #include "third_party/cuda_helpers/helper_cuda.h"
 #include "debug.cu"
 
+struct SubTreeInfo{
+  int start;
+  int end;
+
+  AABB triangle_bounds;
+  AABB centroid_bounds;
+};
+
 __global__ void computeBoundsAndCentroids(Triangle* triangles, int triangle_count, Vec3* ptr_device_vertex_buffer, int* ptr_device_triangle_ids);
 __global__ void constructSAHBVH(Node* nodes, Triangle* ptr_device_triangles, Vec3 scene_bounds, int start, int end);
-__global__ void split(Node* nodes, int node_index, Triangle* ptr_device_triangles, int* triangle_ids, int* temp_triangle_ids, int start, int end, int* ptr_device_splits_and_ranges);
+__global__ void split(Node* nodes, Triangle* ptr_device_triangles, int* triangle_ids, int* temp_triangle_ids, int start, int end, SubTreeInfo* ptr_device_subtrees_write, SubTreeInfo* ptr_device_subtrees_read, int* subtree_count);
 
 __device__ inline int projectToBin(float k_1, float centroid_bin_axis, float scene_min_axis);
 __device__ inline float cost(int N_L, int N_R, float A_L, float A_R);
-
 
 //Inputs along the selected axis. E.g. tri_centroid for x,y or z depending on the selected axis.
 __device__ inline int projectToBin(float k_1, float tri_centroid, float node_min_bounds){
@@ -25,7 +32,26 @@ __device__ inline float cost(int N_L, int N_R, float A_L, float A_R){
   return (A_L * N_L + A_R * N_R) * 0.001;
 }
 
-__global__ void split(Node* nodes, int node_index, Triangle* ptr_device_triangles, int* triangle_ids, int* temp_triangle_ids, int start, int end, int* ptr_device_splits_and_ranges){
+__global__ void split(Node* nodes, 
+                      Triangle* ptr_device_triangles, 
+                      int* triangle_ids, 
+                      int* temp_triangle_ids, 
+                      int start, 
+                      int end, 
+                      SubTreeInfo* ptr_device_subtrees_write, 
+                      SubTreeInfo* ptr_device_subtrees_read,
+                      int* ptr_device_subtree_counter, 
+                      int subtree_count){
+
+  int node_index = blockIdx.x * blockDim.x + threadIdx.x;
+  if(node_index >= subtree_count)
+    return;
+
+  start = ptr_device_subtrees_read[node_index].start;
+  end = ptr_device_subtrees_read[node_index].end;
+
+  // printf("Range min: %i max: %i \n", start, end);
+  
   const int number_of_bins = 16;
   const int primitive_count = end - start;
 
@@ -90,14 +116,6 @@ __global__ void split(Node* nodes, int node_index, Triangle* ptr_device_triangle
                             aabb_l_sweep[i].surfaceArea(),
                             aabb_r_sweep[i].surfaceArea());
 
-    // printf("Evaluating split %i: %i, %i, %f, %f, %f\tCost: %f\n",
-    //   i,
-    //   primitives_left, 
-    //   primitive_count - primitives_left, 
-    //   aabb_l_sweep[i].surfaceArea(), 
-    //   aabb_r_sweep[i].surfaceArea(), 
-    //   k_1, sah_cost);
-
     if(sah_cost < min_cost){
       min_cost = sah_cost;
       split_index = i;
@@ -107,26 +125,17 @@ __global__ void split(Node* nodes, int node_index, Triangle* ptr_device_triangle
   float bin_width = size.e[axis] / number_of_bins;
   float split_position = node_bounds.min_bounds.e[axis] + (bin_width*split_index);
 
-  //@debug Print information regarding the split decision.
-  // char* axis_char = axis == 0 ? "x" : (axis == 1 ? "y" : "z");
-  // printf("\nSplit found. Axis %s, Split index: %i, SAH Cost: %f\n", axis_char, split_index, min_cost);
-  // printf("Bin Width: %f, Split Position: %f\n", bin_width, split_position);
-  // printf("Bin Centroid Bounds:\n\tMin Bounds: (%f, %f, %f)\n\tMax Bounds: (%f, %f, %f)\n\n", 
-  //   node_bounds.min_bounds.x(),
-  //   node_bounds.min_bounds.y(),
-  //   node_bounds.min_bounds.z(),
-  //   node_bounds.max_bounds.x(),
-  //   node_bounds.max_bounds.y(),
-  //   node_bounds.max_bounds.z());
-
   //Copy triangle ids to temporary array.
   for (int i = start; i < end; i++)
     temp_triangle_ids[i] = triangle_ids[i];
 
-
   //Push back triangle ids to the normal array depending on their side of the split position.
   //If triangle centroid is to the "left" of the split position, push to the front of triangle ids
   //Otherwise push to the back.
+
+  //BUG: This will break if we can't guarantee that only ONE thread
+  //     is accessing the same indices at a given time. The subtree
+  //     ids must be used.  
   int left_i = start;
   int right_i = end-1;
   for (int i = start; i < end; i++){
@@ -140,59 +149,49 @@ __global__ void split(Node* nodes, int node_index, Triangle* ptr_device_triangle
     }
   }
 
-  //This is what we want. 
-  //These values can be used to index into the triangle id array during traversal.
+  // //This is what we want. 
+  // //These values can be used to index into the triangle id array during traversal.
   int node_range_min = start;
   int split = left_i;
   int node_range_end = end;
 
-  //TODO: Assign a node the ranges, unless it is an internal node (?),
-  //      in that case, create two children and perform split on the children.
-  //      How can we determine a node index? node_range_min?
-  //      How can we determine children node indices? same as karras? node_range_split?
-  //      Do we add more fields to the Node type, start & range? Then we could just say split node x and the ranges 
-  //      will already be stored.
-
-  //TODO: How do we handle the case where the split_position == start or end? <- Can this even happen?
-  //      Just check it for now.
+  // //TODO: How do we handle the case where the split_position == start or end? <- Can this even happen?
+  // //      Just check it for now.
+  assert(start > 0);
   assert(split != node_range_min);
   assert(split != node_range_end);
 
-  //Record node relationships.
-  Node left_child = Node();
-  left_child.parent = &nodes[node_index];
-  left_child.start_range = start;
-  left_child.range = split;
-  left_child.aabb = aabb_l_sweep[split_index];  //BUG: Is this correct?
-  nodes[split] = left_child;
+  // //Record node relationships.
+  // Node left_child = Node();
+  // left_child.parent = &nodes[node_index];
+  // left_child.start_range = start;
+  // left_child.range = split;
+  // left_child.aabb = aabb_l_sweep[split_index];
+  // nodes[split] = left_child;
 
-  Node right_child = Node();
-  right_child.parent = &nodes[node_index];
-  right_child.start_range = split;
-  right_child.range = end;
-  right_child.aabb = aabb_r_sweep[split_index]; //BUG: Is this correct?
-  nodes[split+1] = right_child;
+  // Node right_child = Node();
+  // right_child.parent = &nodes[node_index];
+  // right_child.start_range = split;
+  // right_child.range = end;
+  // right_child.aabb = aabb_r_sweep[split_index];
+  // nodes[split+1] = right_child;
 
-  ptr_device_splits_and_ranges[node_index*3+0] = node_range_min;
-  ptr_device_splits_and_ranges[node_index*3+1] = split;
-  ptr_device_splits_and_ranges[node_index*3+2] = node_range_end;
+  printf("start %i split %i end %i\n", start, split, end);
 
-  //@debug - print the entire range of triangles and 
-  //         their corresponding side of the splitting plane.
-  // for (int i = start; i < end; i++){
-  //   if(i < node_range_mid)
-  //     printf("Left - Tri: %i, (%f), L: %i, R: %i\n", 
-  //       triangle_ids[i], 
-  //       ptr_device_triangles[triangle_ids[i]].centroid.e[axis], 
-  //       left_i, 
-  //       right_i);
-  //   else
-  //     printf("Right - Tri: %i, (%f), L: %i, R: %i\n", 
-  //       triangle_ids[i], 
-  //       ptr_device_triangles[triangle_ids[i]].centroid.e[axis], 
-  //       left_i, 
-  //       right_i);
-  // }
+  SubTreeInfo left_subtree;
+  left_subtree.start = start;
+  left_subtree.end = split;
+  left_subtree.centroid_bounds = aabb_l_sweep[split_index];
+
+  SubTreeInfo right_subtree;
+  right_subtree.start = split;
+  right_subtree.end = end;
+  right_subtree.centroid_bounds = aabb_r_sweep[split_index];
+
+  ptr_device_subtrees_write[node_index*2 + 0] = left_subtree;
+  ptr_device_subtrees_write[node_index*2 + 1] = right_subtree;
+
+  atomicAdd(ptr_device_subtree_counter, 2);
 }
 
 __global__ void computeBoundsAndCentroids(Triangle* triangles, int triangle_count, Vec3* ptr_device_vertex_buffer, int* ptr_device_triangle_ids){
@@ -219,8 +218,11 @@ class SAHBVH{
   int* ptr_device_triangle_ids;
   int* ptr_device_temp_triangle_ids;
 
-  int* ptr_device_splits_and_ranges;
-  int* ptr_host_splits_and_ranges;
+  int host_subtree_counter = 0;
+  int *ptr_device_subtree_counter;
+  SubTreeInfo* ptr_device_subtrees_0;
+  SubTreeInfo* ptr_device_subtrees_1;
+  SubTreeInfo* ptr_host_subtrees;
 
   Triangle* ptr_device_triangles;
   Triangle* ptr_host_triangles;
@@ -236,14 +238,19 @@ class SAHBVH{
     checkCudaErrors(cudaMalloc(&ptr_device_tree, 2*triangle_count-1 * sizeof(Node)));
     checkCudaErrors(cudaMalloc(&ptr_device_triangle_ids, triangle_count * sizeof(int)));
     checkCudaErrors(cudaMalloc(&ptr_device_temp_triangle_ids, triangle_count * sizeof(int)));
-    checkCudaErrors(cudaMalloc(&ptr_device_splits_and_ranges, triangle_count-1 * sizeof(int) * 3));
+
+    checkCudaErrors(cudaMalloc(&ptr_device_subtrees_0, (triangle_count-1) * sizeof(SubTreeInfo)));
+    checkCudaErrors(cudaMalloc(&ptr_device_subtrees_1, (triangle_count-1) * sizeof(SubTreeInfo)));
+
+    checkCudaErrors(cudaMalloc(&ptr_device_subtree_counter, sizeof(int)));
 
     checkCudaErrors(cudaMemset(ptr_device_tree, 0, 2*triangle_count-1 * sizeof(Node)));
     checkCudaErrors(cudaMemset(ptr_device_triangle_ids, 0, triangle_count * sizeof(int)));
     checkCudaErrors(cudaMemset(ptr_device_temp_triangle_ids, 0, triangle_count * sizeof(int)));
-    checkCudaErrors(cudaMemset(ptr_device_splits_and_ranges, 0, triangle_count-1 * sizeof(int) * 3));
+    checkCudaErrors(cudaMemset(ptr_device_subtrees_0, 0, (triangle_count-1) * sizeof(SubTreeInfo)));
+    checkCudaErrors(cudaMemset(ptr_device_subtrees_1, 0, (triangle_count-1) * sizeof(SubTreeInfo)));
 
-    ptr_host_splits_and_ranges = (int*)malloc(triangle_count-1 * sizeof(int) * 3);
+    ptr_host_subtrees = (SubTreeInfo*)malloc( (triangle_count-1) * sizeof(SubTreeInfo));
 
     this->vertex_count = vertex_count;
     this->triangle_count = triangle_count;
@@ -256,23 +263,15 @@ class SAHBVH{
     checkCudaErrors(cudaFree(ptr_device_tree));
     checkCudaErrors(cudaFree(ptr_device_triangle_ids));
     checkCudaErrors(cudaFree(ptr_device_temp_triangle_ids));
-    checkCudaErrors(cudaFree(ptr_device_splits_and_ranges));
-    free(ptr_host_splits_and_ranges);
+    checkCudaErrors(cudaFree(ptr_device_subtrees_0));
+    checkCudaErrors(cudaFree(ptr_device_subtrees_1));
+    checkCudaErrors(cudaFree(ptr_device_subtree_counter));
+    free(ptr_host_subtrees);
   }
 
   //Returns device ptr to root of tree.
   Node* construct(){
-    // 1. -- ok --  We need the triangles bounding box (tb_i) as well as the centroids (c_i).
-    // 2. -- ok --  The entire scenes triangle bounds (vb) as well as the scenes centroid bounding box (cb)
-    //                All coordinates are stored as float4
-    // 3. -- ok --  Calculate bin id from each triangles centroid.
-    // 4. -- ok --  Assign each triangle centroid to a bin and keep track of the number of assigned triangles. Join the bins AABBs.
-    // 5. -- ok --  Evaluate planes by sweeping the bins and accumulate bounds and triangle count left to right. Save values.
-    //                Do the same right to left and save the values. While sweeing right to left, evaluate SAH. N_l, N_r, A_l & A_r for all bin pairs.
-    // 6. -- ok --  Allocate two arrays, 2N-1 for the nodes and N for the triangle ids.
-    // 7. -- ok --  Sweep the triangle id list from left to right and right to left and evaluate the bin ids for each centroid.
-    // 8. Horizontal parallelization for the upper levels of the tree, vertical parallelization later.
-    const int threads_per_block = 512;
+    const int threads_per_block = 64;
 
     computeBoundsAndCentroids<<<triangle_count/threads_per_block+1, threads_per_block>>>(ptr_device_triangles, triangle_count, ptr_device_vertices, ptr_device_triangle_ids);
     checkCudaErrors(cudaDeviceSynchronize());
@@ -286,28 +285,63 @@ class SAHBVH{
     for (int i = 0; i < triangle_count; i++)
       scene_bounds_centroids.join(ptr_host_triangles[i].centroid);  //O(n)  :^(
     free(ptr_host_triangles);
+    //Initialization complete.
+
 
     //TODO: parallelization. Horizontal for upper levels, vertical for lower. (?)
+    //The goal of split() is to write to SubTreeInfo. For every entry in subtreeinfo, dispatch a kernel that evaluates
+    //that horizontal plane.
 
-    int node_index = 0;
-    split<<<1,1>>>(ptr_device_tree, node_index, ptr_device_triangles, ptr_device_triangle_ids, ptr_device_temp_triangle_ids, 0, triangle_count, ptr_device_splits_and_ranges);
-    checkCudaErrors(cudaDeviceSynchronize());
-    checkCudaErrors(cudaMemcpy(ptr_host_splits_and_ranges, ptr_device_splits_and_ranges, triangle_count -1 * sizeof(int) * 3, cudaMemcpyDeviceToHost));
+    //Split, will write to subtree info and increment subtree counter. (will the subtree counter always be previous * 2)?
+    //For every subtree, launch a kernel.
+    //Clear subtree list and reset counter.
 
-    // for (int i = 0; i < 10; i++){
-    //   int start = ptr_host_splits_and_ranges[node_index*3 + 0];
-    //   int split = ptr_host_splits_and_ranges[node_index*3 + 1];
-    //   int end   = ptr_host_splits_and_ranges[node_index*3 + 2];
-    //   split<<<1,1>>>(ptr_device_tree, node_index,   ptr_device_triangles, ptr_device_triangle_ids, ptr_device_temp_triangle_ids, start, split, ptr_device_splits_and_ranges);
-    //   split<<<1,1>>>(ptr_device_tree, node_index+1, ptr_device_triangles, ptr_device_triangle_ids, ptr_device_temp_triangle_ids, split, end,   ptr_device_splits_and_ranges);
-    //   checkCudaErrors(cudaDeviceSynchronize());
-    //   checkCudaErrors(cudaMemcpy(ptr_host_splits_and_ranges, ptr_device_splits_and_ranges, triangle_count -1 * sizeof(int) * 3, cudaMemcpyDeviceToHost));
-    //   node_index = split;
-    // }
+    host_subtree_counter = 1;
+    checkCudaErrors(cudaMemcpy(ptr_device_subtree_counter, &host_subtree_counter, sizeof(int), cudaMemcpyHostToDevice));
 
+    for (int i = 0; i < 10; i++){
+      checkCudaErrors(cudaMemcpy(&host_subtree_counter, ptr_device_subtree_counter, sizeof(int), cudaMemcpyDeviceToHost));
+      checkCudaErrors(cudaMemset(ptr_device_subtree_counter, 0, sizeof(int)));  //Reset device counter.
+      // checkCudaErrors(cudaMemset(ptr_device_subtrees, 0, (triangle_count-1) * sizeof(SubTreeInfo))); //Reset subtrees.
+      checkCudaErrors(cudaDeviceSynchronize());
+
+      printf("Subtree_count: %i, 0x%p\t0x%p\n", host_subtree_counter, ptr_device_subtree_counter, &host_subtree_counter);
+
+      int threads = host_subtree_counter/threads_per_block+1;
+      if(i%1 == 0){
+        split<<<threads, threads_per_block>>>(ptr_device_tree,
+                                              ptr_device_triangles,
+                                              ptr_device_triangle_ids,
+                                              ptr_device_temp_triangle_ids,
+                                              0,
+                                              triangle_count,
+                                              ptr_device_subtrees_0,
+                                              ptr_device_subtrees_1,
+                                              ptr_device_subtree_counter,
+                                              host_subtree_counter);
+      }
+      else{
+        split<<<threads, threads_per_block>>>(ptr_device_tree,
+                                              ptr_device_triangles,
+                                              ptr_device_triangle_ids,
+                                              ptr_device_temp_triangle_ids,
+                                              0,
+                                              triangle_count,
+                                              ptr_device_subtrees_1,
+                                              ptr_device_subtrees_0,
+                                              ptr_device_subtree_counter,
+                                              host_subtree_counter);
+      }
+
+
+      checkCudaErrors(cudaDeviceSynchronize());
+    }
+    
+    checkCudaErrors(cudaMemcpy(ptr_host_subtrees, ptr_device_subtrees_0, (triangle_count-1) * sizeof(SubTreeInfo), cudaMemcpyDeviceToHost));
     //check children of nodes[node_index] and split both.
-    DebugHelper::PrintNodes(ptr_device_tree, triangle_count, ptr_device_triangles);
+    // DebugHelper::PrintNodes(ptr_device_tree, triangle_count, ptr_device_triangles);
 
+    checkCudaErrors(cudaDeviceSynchronize());
     printf("Binned SAH BVH construction completed.\n");
     return ptr_device_tree;
   }
