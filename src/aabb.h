@@ -37,7 +37,10 @@ __device__ __host__ AABB AABB::join(AABB aabb_1, AABB aabb_2){
 
 __device__ __host__ float AABB::surfaceArea(){
     Vec3 size = this->max_bounds - this->min_bounds;
-    return size.x() * size.y() + size.x() * size.z() + size.y() * size.z() * 2;
+    if(size.x() < 0 || size.y() < 0 || size.z() < 0)
+        return 0.0;
+    //BUG: should the 0.01 really be necessary?
+    return size.x() * size.y() + size.x() * size.z() + size.y() * size.z() * 0.01;
 }
 
 //https://www.scratchapixel.com/lessons/3d-basic-rendering/minimal-ray-tracer-rendering-simple-shapes/ray-box-intersection
