@@ -174,11 +174,11 @@ __global__ void constructLBVH(Triangle *triangles, Node* internal_nodes, Node* l
     left_child = &leaf_nodes[split];
     left_child->primitive = &triangles[split];
     left_child->aabb = triangles[split].aabb;
-    left_child->isLeaf = true;
+    left_child->is_leaf = true;
   }
   else{
     left_child = &internal_nodes[split];
-    left_child->isLeaf = false;
+    left_child->is_leaf = false;
   }
   
   // Select right_child.
@@ -187,14 +187,13 @@ __global__ void constructLBVH(Triangle *triangles, Node* internal_nodes, Node* l
     right_child = &leaf_nodes[split + 1];
     right_child->primitive = &triangles[split + 1];
     right_child->aabb = triangles[split + 1].aabb;
-    right_child->isLeaf = true;
+    right_child->is_leaf = true;
   }
   else{
     right_child = &internal_nodes[split + 1];
-    right_child->isLeaf = false;
+    right_child->is_leaf = false;
   }
 
-  // printf("Node: %i, \tMorton: %i, \tMin: %i, \tMax: %i, \tSplit: %i, \t%i, \t%i\n", node_index, triangles[node_index].morton_code, first, last, split, split == first, split + 1 == last); // @debug
   Node *self_ptr = &internal_nodes[node_index];
 
   assert(self_ptr != nullptr);

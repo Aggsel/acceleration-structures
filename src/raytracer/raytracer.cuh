@@ -109,7 +109,7 @@ __device__ Vec3 color(Ray *ray, curandState *rand, int max_depth, Vec3 *vertices
       bool left_aabb_intersect = left_child->aabb.intersect_ray(*ray);
       bool right_aabb_intersect = right_child->aabb.intersect_ray(*ray);
 
-      if(left_aabb_intersect && left_child->isLeaf){
+      if(left_aabb_intersect && left_child->is_leaf){
         Triangle leaf_primitive = *left_child->primitive;
         int v0 = leaf_primitive.v0_index;
         int v1 = leaf_primitive.v1_index;
@@ -127,7 +127,7 @@ __device__ Vec3 color(Ray *ray, curandState *rand, int max_depth, Vec3 *vertices
           }
         }
       }
-      if(right_aabb_intersect && right_child->isLeaf){
+      if(right_aabb_intersect && right_child->is_leaf){
         Triangle leaf_primitive = *right_child->primitive;
         int v0 = leaf_primitive.v0_index;
         int v1 = leaf_primitive.v1_index;
@@ -146,8 +146,8 @@ __device__ Vec3 color(Ray *ray, curandState *rand, int max_depth, Vec3 *vertices
         }
       }
 
-      bool traverse_left = (!left_child->isLeaf) && left_aabb_intersect;
-      bool traverse_right = (!right_child->isLeaf) && right_aabb_intersect;
+      bool traverse_left = (!left_child->is_leaf) && left_aabb_intersect;
+      bool traverse_right = (!right_child->is_leaf) && right_aabb_intersect;
 
       if(!traverse_left && !traverse_right){
         node = stack[stack_index];

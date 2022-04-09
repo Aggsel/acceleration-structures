@@ -65,8 +65,10 @@ class ObjLoader{
 			max_bounds.e[2] = max(max_bounds.z(), z);
 		}
 		scene_bounding_box = AABB::AABB(min_bounds, max_bounds);
+		Vec3 size = max_bounds - min_bounds;
 		printf("Scene bounds calculated...\n\tMin Bounds: (%f, %f, %f)\n", min_bounds.x(), min_bounds.y(), min_bounds.z());
-		printf("\tMax Bounds: (%f, %f, %f)\n", max_bounds.x(), max_bounds.y(), max_bounds.z());  
+		printf("\tMax Bounds: (%f, %f, %f)\n", max_bounds.x(), max_bounds.y(), max_bounds.z());
+		printf("\tSize: (%f, %f, %f)\n", size.x(), size.y(), size.z());
 
 		//The Obj reader does not store vertex indices in contiguous memory.
 		//Copy the indices into a block of memory on the host device.
@@ -80,6 +82,7 @@ class ObjLoader{
 			tempTri.v0_index = v0_index;
 			tempTri.v1_index = v1_index;
 			tempTri.v2_index = v2_index;
+			tempTri.morton_code = 0;
 			ptr_host_triangles[i/3] = tempTri;
 		}
 	}

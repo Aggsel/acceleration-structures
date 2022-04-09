@@ -9,16 +9,15 @@
 
 __global__ void computeBoundsAndCentroids(Triangle* triangles, int triangle_count, Vec3* ptr_device_vertex_buffer, int* ptr_device_triangle_ids);
 
-//TODO: remove device capabilites.
-__device__ __host__ inline int projectToBin(float k_1, float centroid_bin_axis, float scene_min_axis);
-__device__ __host__ inline float cost(int N_L, int N_R, float A_L, float A_R);
+inline int projectToBin(float k_1, float centroid_bin_axis, float scene_min_axis);
+inline float cost(int N_L, int N_R, float A_L, float A_R);
 
 //Inputs along the selected axis. E.g. tri_centroid for x,y or z depending on the selected axis.
-__device__ __host__ inline int projectToBin(float k_1, float tri_centroid, float node_min_bounds){
+inline int projectToBin(float k_1, float tri_centroid, float node_min_bounds){
   return (int) (k_1 * (tri_centroid - node_min_bounds));
 }
 
-__device__ __host__ inline float cost(int N_L, int N_R, float A_L, float A_R){
+inline float cost(int N_L, int N_R, float A_L, float A_R){
   //BUG: Might become an issue, *0.0001 to decrease cost (avoiding overflowing for high costs)
   return (A_L * N_L + A_R * N_R) * 0.001;
 }
@@ -40,6 +39,31 @@ __global__ void computeBoundsAndCentroids(Triangle* triangles, int triangle_coun
   triangles[node_index].aabb = AABB(vertex_bounds_min, vertex_bounds_max);
 }
 
+//See comment in SAHBVH constructor regarding the use of this function.
+__global__ void deepCopyTreeToGPU(Node* input_nodes, int nodes_length, Node* output_internal_nodes, Node* output_leaf_nodes, Triangle* triangles, int triangle_count, int* triangle_ids){
+  //Traverse tree in reverse order and copy nodes to internal_nodes and leaf_nodes buffers.
+  int internal_nodes = triangle_count-2;
+  int leaf_nodes = triangle_count-1;
+  for (int i = nodes_length-1; i >= 0; i--){
+    Node *temp_node = &input_nodes[i];
+
+    Node node = input_nodes[i];
+    if(node.is_leaf || (node.right_child_i == -1)){
+      node.primitive = &triangles[triangle_ids[node.start_range]];
+      output_leaf_nodes[leaf_nodes] = node;
+      input_nodes[i].parent = &output_leaf_nodes[leaf_nodes]; //leave a trail for the parent to pick up.
+      leaf_nodes--;
+    }
+    else{
+      node.left_child = input_nodes[node.left_child_i].parent;
+      node.right_child = input_nodes[node.right_child_i].parent;
+      output_internal_nodes[internal_nodes] = node;
+      input_nodes[i].parent = &output_internal_nodes[internal_nodes]; //leave a trail for the parent to pick up.
+      internal_nodes--;
+    }
+  }
+}
+
 class SAHBVH{
   Triangle* triangles;
   Triangle* ptr_device_triangles;
@@ -47,14 +71,19 @@ class SAHBVH{
   int triangle_count;
   int vertex_count;
 
-  int nodes_created = 0;
+  int internal_nodes_created = 0;
+  int leaf_nodes_created = 0;
 
   AABB scene_bounds_triangles;
   AABB scene_bounds_centroids;
 
   int* triangle_ids;
   int* temp_triangle_ids;
-  Node* nodes;
+  Node* ptr_host_internal_nodes;
+
+  Node* ptr_device_internal_nodes;
+  Node* ptr_device_leaf_nodes;
+  Node* ptr_device_temp_nodes;
   int nodes_length;
 
   public:
@@ -65,20 +94,30 @@ class SAHBVH{
     this->temp_triangle_ids = (int*)malloc(sizeof(int) * triangle_count);
     memcpy(temp_triangle_ids, triangle_ids, triangle_count);
 
-    //TODO: While the maximum number of nodes in the tree is (2n)-1, we do not need leaf nodes (?).
     this->nodes_length = 2*triangle_count-1;
-    this->nodes = (Node*)calloc(nodes_length, sizeof(Node));
+    this->ptr_host_internal_nodes = (Node*)calloc(nodes_length, sizeof(Node));
+    //Initialize indices to -1, indicating no child is present.
+    for (int i = 0; i < nodes_length; i++){
+      this->ptr_host_internal_nodes[i].right_child_i = -1;
+      this->ptr_host_internal_nodes[i].left_child_i = -1;
+    }
+    
     this->vertex_count = vertex_count;
     this->triangle_count = triangle_count;
     this->scene_bounds_triangles = scene_bounds_triangles;
     this->ptr_device_triangles = ptr_device_triangles;
     this->ptr_device_vertex_buffer = ptr_device_vertices;
+
+    checkCudaErrors(cudaMalloc(&ptr_device_internal_nodes, (triangle_count-1) * sizeof(Node)));
+    checkCudaErrors(cudaMalloc(&ptr_device_leaf_nodes, triangle_count * sizeof(Node)));
+    checkCudaErrors(cudaMalloc(&ptr_device_temp_nodes, nodes_length * sizeof(Node)));
   }
 
   ~SAHBVH(){
-    free(nodes);
+    free(ptr_host_internal_nodes);
     free(triangle_ids);
     free(temp_triangle_ids);
+    checkCudaErrors(cudaFree(ptr_device_temp_nodes));
   }
 
   void splitNode(Node* node, Node* nodes, int start, int end, int* triangle_ids, int* temp_triangle_ids, Triangle* triangles, int depth);
@@ -86,9 +125,9 @@ class SAHBVH{
   //Returns device ptr to root of tree.
   Node* construct(){
     printf("Starting SAH Binning construction.\n");
-
     //TODO: Check that this is actually faster than just computing the centroids on the CPU.
     computeBoundsAndCentroids<<<triangle_count/64+1, 64>>>(ptr_device_triangles, triangle_count, ptr_device_vertex_buffer);
+    checkCudaErrors(cudaDeviceSynchronize());
     this->triangles = (Triangle*)malloc(sizeof(Triangle) * triangle_count);
     checkCudaErrors(cudaMemcpy(triangles, ptr_device_triangles, sizeof(Triangle) * triangle_count, cudaMemcpyDeviceToHost));
 
@@ -96,14 +135,29 @@ class SAHBVH{
     root_node->start_range = 0;
     root_node->range = triangle_count;
     root_node->aabb = scene_bounds_triangles;
-    nodes[0] = *root_node;
+    ptr_host_internal_nodes[0] = *root_node;
 
-    nodes_created = 0;
-    splitNode(nodes, nodes, 0, triangle_count, triangle_ids, temp_triangle_ids, triangles, 0);
+    internal_nodes_created = 0;
+    splitNode(ptr_host_internal_nodes, ptr_host_internal_nodes, 0, triangle_count, triangle_ids, temp_triangle_ids, triangles, 0);    
+    printf("SAH Bin construction completed");
 
-    //TODO: Reconstruct tree and cpy to gpu memory.
-    printf("SAH Bin construction completed. %i nodes. \n", nodes_created+1); // Is zero based, hence the +1.
-    return nodes;
+    //This memcpy is inevitable if we construct tree on the cpu and render on the gpu.
+    checkCudaErrors(cudaMemcpy(ptr_device_temp_nodes, ptr_host_internal_nodes, nodes_length * sizeof(Node), cudaMemcpyHostToDevice));
+    checkCudaErrors(cudaDeviceSynchronize());
+
+    int* ptr_device_triangle_ids;
+    checkCudaErrors(cudaMalloc(&ptr_device_triangle_ids, sizeof(int) * triangle_count));
+    checkCudaErrors(cudaMemcpy(ptr_device_triangle_ids, triangle_ids, sizeof(int) * triangle_count, cudaMemcpyHostToDevice));
+    checkCudaErrors(cudaDeviceSynchronize());
+
+    //This could be omitted if the tracing traversal is modified to be compliant with our CPU tree structure.
+    //As of right now we're using the same traversal algorithm for both lbvh and binned sah bvh, but the structure is slightly different. 
+    //We must therefore first copy the data to the GPU and then update all pointers in the tree to be device, not host.
+    deepCopyTreeToGPU<<<1,1>>>(ptr_device_temp_nodes, internal_nodes_created+1, ptr_device_internal_nodes, ptr_device_leaf_nodes, ptr_device_triangles, triangle_count, ptr_device_triangle_ids);
+    checkCudaErrors(cudaDeviceSynchronize());
+    checkCudaErrors(cudaFree(ptr_device_triangle_ids));
+
+    return ptr_device_internal_nodes;
   }
 };
 
@@ -111,12 +165,10 @@ class SAHBVH{
 void SAHBVH::splitNode(Node* node, Node* nodes, int start, int end, int* triangle_ids, int* temp_triangle_ids, Triangle* triangles, int depth){
   const int number_of_bins = 16;
   const int primitive_count = end - start;
-
-  //BUG: For large scenes, our tree gets really really large.
-  //     Stack overflow (?) at depth 461 or just after node 110118.
+  //BUG: For large scenes, our tree gets really really large, may cause stack overflow.
 
   //Calculate node AABB
-  node->aabb = AABB(Vec3(FLT_MAX, FLT_MAX, FLT_MAX), Vec3(-FLT_MAX, -FLT_MAX, -FLT_MAX));
+  node->aabb           = AABB(Vec3(FLT_MAX, FLT_MAX, FLT_MAX), Vec3(-FLT_MAX, -FLT_MAX, -FLT_MAX));
   AABB centroid_bounds = AABB(Vec3(FLT_MAX, FLT_MAX, FLT_MAX), Vec3(-FLT_MAX, -FLT_MAX, -FLT_MAX));
   
   for(int i = start; i < end; i++){
@@ -213,35 +265,27 @@ void SAHBVH::splitNode(Node* node, Node* nodes, int start, int end, int* triangl
       right_i--;
     }
   }
-
   int split = left_i;
-  int primitive_count_l = split - start;
-  int primitive_count_r = end - split;
 
   if(split == start || split == end){
     node->start_range = start;
     node->range = end - start;
+    node->is_leaf = true;
     return;
   }
 
   //Record node relationships.
-  this->nodes_created++;
-  Node* left_child = &nodes[nodes_created];
-  left_child->parent = node;
+  this->internal_nodes_created++;
+  Node* left_child = &nodes[internal_nodes_created];
   left_child->start_range = start;
   left_child->range = split - start;
-  left_child->aabb = aabb_l_sweep[split_index];
-  node->left_child = left_child;
   node->left_child_i = left_child - nodes;
   splitNode(left_child, nodes, start, split, triangle_ids, temp_triangle_ids, triangles, depth+1);
 
-  this->nodes_created++;
-  Node* right_child = &nodes[nodes_created];
-  right_child->parent = node;
+  this->internal_nodes_created++;
+  Node* right_child = &nodes[internal_nodes_created];
   right_child->start_range = split;
   right_child->range = end - split;
-  right_child->aabb = aabb_r_sweep[split_index];
-  node->right_child = right_child;
   node->right_child_i = right_child - nodes;
   splitNode(right_child, nodes, split, end, triangle_ids, temp_triangle_ids, triangles, depth+1);
 }
