@@ -8,7 +8,7 @@ __global__ void d_printNodes(Node* nodes, int size, Triangle* triangles){
     if(node_index >= size)
         return;
     Node* node = &nodes[node_index];
-    printf("Node: %i\tNode: 0x%p\tParent: 0x%p, \tLeft Child: 0x%p, \tRight Child: 0x%p\tMorton: %i\n", node_index, node, node->parent, node->left_child, node->right_child, triangles[node_index].morton_code);
+    printf("Node: %i\tNode: 0x%p\tParent: 0x%p, \tLeft Child: 0x%p, \tRight Child: 0x%p\tMorton: %u\n", node_index, node, node->parent, node->left_child, node->right_child, triangles[node_index].morton_code);
 }
 
 namespace DebugHelper{

@@ -59,22 +59,21 @@ __global__ void generateMortonCodes(Triangle* triangles, int triangle_count, Vec
 }
 
 __device__ int commonPrefix(Triangle *morton_codes, int index1, int index2){
+  if(index2 < 0 || index1 < 0)
+    return 0;
   unsigned int key1 = morton_codes[index1].morton_code;
   unsigned int key2 = morton_codes[index2].morton_code;
   if(key1 != key2)
+    // printf("Same: Index: %i Index: %i XOR: %i Prefix l: %i\n", index1, index2, index1 ^ index2, __clz(index1 ^ index2));
     return __clz(key1 ^ key2);
-  return __clz(index1 ^ index2);
+  // printf("Dupe: Index: %i (%u) Index: %i (%u) XOR: %u Prefix l: %i\n", index1, key1, index2, key2, index1 ^ index2, __clz(index1 ^ index2));
+  return __clz(index1 ^ index2) + 32;
 }
 
-__device__ int2 determineRange(Triangle *sorted_morton_codes, int total_primitives, int node_index){
-  //Time complexity of the algorithm is proportional to the number of keys covered by the nodes.
-  //The widest node is also one that we know in advance:
-  //TODO @perf: Does this actually help performance wise?
+__device__ void determineRange(Triangle *sorted_morton_codes, int total_primitives, int node_index, int* range_min, int* range_max){
   if(node_index == 0){
-    int2 range;
-    range.x = 0;
-    range.y = total_primitives-1;
-    return range;
+    *range_min = 0;
+    *range_max = total_primitives-1;
   }
 
   //Determine direction (d).
@@ -83,7 +82,7 @@ __device__ int2 determineRange(Triangle *sorted_morton_codes, int total_primitiv
   int prev_delta = commonPrefix(sorted_morton_codes, node_index, node_index-1);
   int d = next_delta - prev_delta < 0 ? -1 : 1;
 
-  //Compute upper bound for the length of the range.
+  //Upper bound
   int lmax = 128;
   int delta_min = min(next_delta, prev_delta);
   int delta = -1;
@@ -116,27 +115,16 @@ __device__ int2 determineRange(Triangle *sorted_morton_codes, int total_primitiv
     t = t >> 1;
   }
   unsigned int j = node_index + l * d;
-
-  int2 min_max;
-  min_max.x = min(node_index, j);
-  min_max.y = max(node_index, j);
-  return min_max;
+  *range_min = min(node_index, j);
+  *range_max = max(node_index, j);
 }
 
 //From https://developer.nvidia.com/blog/thinking-parallel-part-iii-tree-construction-gpu/
 __device__ int findSplit(Triangle *sorted_morton_codes, int first, int last){
-  int first_morton = sorted_morton_codes[first].morton_code;
-  int last_morton = sorted_morton_codes[last].morton_code;
-
-  if(first_morton == last_morton)
-    return (first + last) >> 1;
 
   //count leading zeros
   int common_prefix = commonPrefix(sorted_morton_codes, first, last);
 
-  // Use binary search to find where the next bit differs.
-  // Specifically, we are looking for the highest object that
-  // shares more than common_prefix bits with the first one.
   int split = first;
   int step = last - first;
 
@@ -161,9 +149,8 @@ __global__ void constructLBVH(Triangle *triangles, Node* internal_nodes, Node* l
 
   //Determine the range of the current node by performing a binary search on the
   //largest common prefix for neighboring morton codes.
-  int2 range = determineRange(triangles, primitive_count, node_index);
-  int first = range.x;
-  int last = range.y;
+  int first, last;
+  determineRange(triangles, primitive_count, node_index, &first, &last);
 
   // Determine where to split the range.
   int split = findSplit(triangles, first, last);
@@ -304,9 +291,6 @@ class LBVH{
     //3. For each internal node in the tree, calculate it's range and split/children.
     constructLBVH<<<(triangle_count-1)/threads_per_block+1, threads_per_block>>>(ptr_device_triangles, ptr_device_internal_nodes, ptr_device_leaf_nodes, triangle_count);
     checkCudaErrors(cudaDeviceSynchronize());
-
-    // DebugHelper::PrintNodes(ptr_device_internal_nodes, triangle_count-1, ptr_device_triangles);
-    // DebugHelper::PrintNodes(ptr_device_leaf_nodes,     triangle_count,   ptr_device_triangles);
 
     //4. From each leaf node, traverse the tree towards the root of the tree.
     //   If the branch is the first to reach a given node, stop.

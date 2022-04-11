@@ -18,8 +18,7 @@ inline int projectToBin(float k_1, float tri_centroid, float node_min_bounds){
 }
 
 inline float cost(int N_L, int N_R, float A_L, float A_R){
-  //BUG: Might become an issue, *0.0001 to decrease cost (avoiding overflowing for high costs)
-  return (A_L * N_L + A_R * N_R) * 0.001;
+  return (A_L * N_L + A_R * N_R);
 }
 
 __global__ void computeBoundsAndCentroids(Triangle* triangles, int triangle_count, Vec3* ptr_device_vertex_buffer){
@@ -45,8 +44,6 @@ __global__ void deepCopyTreeToGPU(Node* input_nodes, int nodes_length, Node* out
   int internal_nodes = triangle_count-2;
   int leaf_nodes = triangle_count-1;
   for (int i = nodes_length-1; i >= 0; i--){
-    Node *temp_node = &input_nodes[i];
-
     Node node = input_nodes[i];
     if(node.is_leaf || (node.right_child_i == -1)){
       node.primitive = &triangles[triangle_ids[node.start_range]];
@@ -120,12 +117,12 @@ class SAHBVH{
     checkCudaErrors(cudaFree(ptr_device_temp_nodes));
   }
 
-  void splitNode(Node* node, Node* nodes, int start, int end, int* triangle_ids, int* temp_triangle_ids, Triangle* triangles, int depth);
+  void splitNode(Node* node, Node* nodes, int start, int end, int* triangle_ids, int* temp_triangle_ids, Triangle* triangles);
 
   //Returns device ptr to root of tree.
   Node* construct(){
     printf("Starting SAH Binning construction.\n");
-    //TODO: Check that this is actually faster than just computing the centroids on the CPU.
+
     computeBoundsAndCentroids<<<triangle_count/64+1, 64>>>(ptr_device_triangles, triangle_count, ptr_device_vertex_buffer);
     checkCudaErrors(cudaDeviceSynchronize());
     this->triangles = (Triangle*)malloc(sizeof(Triangle) * triangle_count);
@@ -138,8 +135,8 @@ class SAHBVH{
     ptr_host_internal_nodes[0] = *root_node;
 
     internal_nodes_created = 0;
-    splitNode(ptr_host_internal_nodes, ptr_host_internal_nodes, 0, triangle_count, triangle_ids, temp_triangle_ids, triangles, 0);    
-    printf("SAH Bin construction completed");
+    splitNode(ptr_host_internal_nodes, ptr_host_internal_nodes, 0, triangle_count, triangle_ids, temp_triangle_ids, triangles);    
+    printf("SAH Bin construction completed\n");
 
     //This memcpy is inevitable if we construct tree on the cpu and render on the gpu.
     checkCudaErrors(cudaMemcpy(ptr_device_temp_nodes, ptr_host_internal_nodes, nodes_length * sizeof(Node), cudaMemcpyHostToDevice));
@@ -162,10 +159,9 @@ class SAHBVH{
 };
 
 
-void SAHBVH::splitNode(Node* node, Node* nodes, int start, int end, int* triangle_ids, int* temp_triangle_ids, Triangle* triangles, int depth){
+void SAHBVH::splitNode(Node* node, Node* nodes, int start, int end, int* triangle_ids, int* temp_triangle_ids, Triangle* triangles){
   const int number_of_bins = 16;
   const int primitive_count = end - start;
-  //BUG: For large scenes, our tree gets really really large, may cause stack overflow.
 
   //Calculate node AABB
   node->aabb           = AABB(Vec3(FLT_MAX, FLT_MAX, FLT_MAX), Vec3(-FLT_MAX, -FLT_MAX, -FLT_MAX));
@@ -199,14 +195,13 @@ void SAHBVH::splitNode(Node* node, Node* nodes, int start, int end, int* triangl
     bin_aabbs[i] = AABB(Vec3(FLT_MAX, FLT_MAX, FLT_MAX), Vec3(-FLT_MAX, -FLT_MAX, -FLT_MAX));
 
   //Calculate N_l, N_r, A_l & A_r for all triangles for all bins.
-  //TODO: This could be better parallelized?
   for(int i = start; i < end; i++){
     int bin_index = projectToBin( k_1, 
                                   triangles[triangle_ids[i]].centroid.e[axis],
                                   centroid_bounds.min_bounds.e[axis]);
 
     bin_triangle_counts[bin_index]++;
-    bin_aabbs[bin_index].join(triangles[triangle_ids[i]].aabb);  //TODO: Should this be triangle centroid or aabb?
+    bin_aabbs[bin_index].join(triangles[triangle_ids[i]].aabb);
   }
 
   //Sweep from left -->>
@@ -280,12 +275,12 @@ void SAHBVH::splitNode(Node* node, Node* nodes, int start, int end, int* triangl
   left_child->start_range = start;
   left_child->range = split - start;
   node->left_child_i = left_child - nodes;
-  splitNode(left_child, nodes, start, split, triangle_ids, temp_triangle_ids, triangles, depth+1);
+  splitNode(left_child, nodes, start, split, triangle_ids, temp_triangle_ids, triangles);
 
   this->internal_nodes_created++;
   Node* right_child = &nodes[internal_nodes_created];
   right_child->start_range = split;
   right_child->range = end - split;
   node->right_child_i = right_child - nodes;
-  splitNode(right_child, nodes, split, end, triangle_ids, temp_triangle_ids, triangles, depth+1);
+  splitNode(right_child, nodes, split, end, triangle_ids, temp_triangle_ids, triangles);
 }

@@ -106,8 +106,8 @@ __device__ Vec3 color(Ray *ray, curandState *rand, int max_depth, Vec3 *vertices
       Node* left_child = node->left_child;
       Node* right_child = node->right_child;
 
-      bool left_aabb_intersect = left_child->aabb.intersect_ray(*ray);
-      bool right_aabb_intersect = right_child->aabb.intersect_ray(*ray);
+      bool left_aabb_intersect = left_child->aabb.intersectRay(*ray);
+      bool right_aabb_intersect = right_child->aabb.intersectRay(*ray);
 
       if(left_aabb_intersect && left_child->is_leaf){
         Triangle leaf_primitive = *left_child->primitive;
@@ -206,7 +206,7 @@ __device__ Vec3 color(Ray *ray, curandState *rand, int max_depth, Vec3 *vertices
     }
 
     if(was_hit){
-      Vec3 target = hit.pos + hit.normal + randomInUnitSphere(rand);
+      Vec3 target = hit.pos + hit.normal;// + randomInUnitSphere(rand);
       cur_attenuation *= 0.5f;
       ray->org = hit.pos;
       ray->dir = normalize(target - hit.pos);
@@ -241,7 +241,7 @@ __device__ bool intersectTri(Ray *ray, RayHit *hit, Vec3 v0, Vec3 v1, Vec3 v2, V
 
   Vec3 pvec = cross(ray->direction(), edge2);
   float det = dot(edge1, pvec);
-  //Culling implementation
+
   if(det < EPSILON)
     return false;
   
@@ -256,14 +256,16 @@ __device__ bool intersectTri(Ray *ray, RayHit *hit, Vec3 v0, Vec3 v1, Vec3 v2, V
     return false;
 
   float inv_det = 1.0 / det;
-  hit->dist = dot(edge2, qvec) * inv_det;
+  float dist = dot(edge2, qvec) * inv_det;
+  if (dist < 0.001)
+    return false;
+
+  hit->dist = dist;
   hit->uv.e[0] *= inv_det;
   hit->uv.e[1] *= inv_det;
   hit->normal = normalize(cross(edge1, edge2));
   hit->pos = ray->point_along_ray(hit->dist);
 
-  //BUG: There's something funky with the normals when interpolating...
-  // bestHit->normal = normalize(bestHit->uv.x()*n1 + bestHit->uv.y() * n2 + (1.0 - bestHit->uv.x() - bestHit->uv.y()) * n0);
   return true;
 }
 
