@@ -1,6 +1,7 @@
 #pragma once
 
-#include <limits>
+#include <chrono>
+#include <queue>
 #include "vec3.h"
 #include "triangle.h"
 #include "node.h"
@@ -14,7 +15,7 @@ inline float cost(int N_L, int N_R, float A_L, float A_R);
 
 //Inputs along the selected axis. E.g. tri_centroid for x,y or z depending on the selected axis.
 inline int projectToBin(float k_1, float tri_centroid, float node_min_bounds){
-  return (int) (k_1 * (tri_centroid - node_min_bounds));
+  return min(max((int) (k_1 * (tri_centroid - node_min_bounds)), 0), 16);
 }
 
 inline float cost(int N_L, int N_R, float A_L, float A_R){
@@ -39,11 +40,11 @@ __global__ void computeBoundsAndCentroids(Triangle* triangles, int triangle_coun
 }
 
 //See comment in SAHBVH constructor regarding the use of this function.
-__global__ void deepCopyTreeToGPU(Node* input_nodes, int nodes_length, Node* output_internal_nodes, Node* output_leaf_nodes, Triangle* triangles, int triangle_count, int* triangle_ids){
+__global__ void deepCopyTreeToGPU(Node* input_nodes, int nodes_length, Node* output_internal_nodes, Node* output_leaf_nodes, Triangle* triangles, int internal_nodes_count, int leaf_nodes_count, int* triangle_ids){
   //Traverse tree in reverse order and copy nodes to internal_nodes and leaf_nodes buffers.
-  int internal_nodes = triangle_count-2;
-  int leaf_nodes = triangle_count-1;
-  for (int i = nodes_length-1; i >= 0; i--){
+  int internal_nodes = internal_nodes_count;
+  int leaf_nodes = leaf_nodes_count-1;
+  for (int i = nodes_length; i >= 0; i--){
     Node node = input_nodes[i];
     if(node.is_leaf || (node.right_child_i == -1)){
       node.primitive = &triangles[triangle_ids[node.start_range]];
@@ -68,8 +69,8 @@ class SAHBVH{
   int triangle_count;
   int vertex_count;
 
-  int internal_nodes_created = 0;
-  int leaf_nodes_created = 0;
+  int internal_nodes_created;
+  int leaf_nodes_created;
 
   AABB scene_bounds_triangles;
   AABB scene_bounds_centroids;
@@ -82,6 +83,8 @@ class SAHBVH{
   Node* ptr_device_leaf_nodes;
   Node* ptr_device_temp_nodes;
   int nodes_length;
+
+  std::queue<Node*> work_queue;
 
   public:
   SAHBVH(Triangle* ptr_device_triangles, int triangle_count, Vec3* ptr_device_vertices, int vertex_count, AABB scene_bounds_triangles){
@@ -98,6 +101,9 @@ class SAHBVH{
       this->ptr_host_internal_nodes[i].right_child_i = -1;
       this->ptr_host_internal_nodes[i].left_child_i = -1;
     }
+
+    this->internal_nodes_created = 0;
+    this->leaf_nodes_created = 0;
     
     this->vertex_count = vertex_count;
     this->triangle_count = triangle_count;
@@ -117,10 +123,11 @@ class SAHBVH{
     checkCudaErrors(cudaFree(ptr_device_temp_nodes));
   }
 
-  void splitNode(Node* node, Node* nodes, int start, int end, int* triangle_ids, int* temp_triangle_ids, Triangle* triangles);
+  void splitNode(SAHBVH *bvh, Node* node, Node* nodes, int start, int end, int* triangle_ids, int* temp_triangle_ids, Triangle* triangles, int depth);
 
   //Returns device ptr to root of tree.
   Node* construct(){
+    using namespace std::chrono;
     printf("Starting SAH Binning construction.\n");
 
     computeBoundsAndCentroids<<<triangle_count/64+1, 64>>>(ptr_device_triangles, triangle_count, ptr_device_vertex_buffer);
@@ -130,13 +137,36 @@ class SAHBVH{
 
     Node* root_node = new Node();
     root_node->start_range = 0;
+    root_node->depth = 0;
     root_node->range = triangle_count;
     root_node->aabb = scene_bounds_triangles;
+    root_node->left_child_i = 1;
+    root_node->right_child_i = 2;
     ptr_host_internal_nodes[0] = *root_node;
 
-    internal_nodes_created = 0;
-    splitNode(ptr_host_internal_nodes, ptr_host_internal_nodes, 0, triangle_count, triangle_ids, temp_triangle_ids, triangles);    
-    printf("SAH Bin construction completed\n");
+    work_queue.push(root_node);
+    steady_clock::time_point start = high_resolution_clock::now();
+
+    while(!work_queue.empty()){
+      Node* active_node = work_queue.front();
+      work_queue.pop();
+      splitNode(this, 
+          active_node, 
+          ptr_host_internal_nodes, 
+          active_node->start_range, 
+          active_node->start_range + active_node->range, 
+          triangle_ids, 
+          temp_triangle_ids, 
+          triangles, 
+          0);
+    }
+
+    printf("Nodes Created: %i\n", internal_nodes_created);
+
+    steady_clock::time_point stop = high_resolution_clock::now();
+    long long duration_ms = duration_cast<milliseconds>(stop - start).count();
+    long long duration_us = duration_cast<microseconds>(stop - start).count();
+    printf("SAH Bin construction completed, took %llims (%llius)\n", duration_ms, duration_us);
 
     //This memcpy is inevitable if we construct tree on the cpu and render on the gpu.
     checkCudaErrors(cudaMemcpy(ptr_device_temp_nodes, ptr_host_internal_nodes, nodes_length * sizeof(Node), cudaMemcpyHostToDevice));
@@ -146,11 +176,19 @@ class SAHBVH{
     checkCudaErrors(cudaMalloc(&ptr_device_triangle_ids, sizeof(int) * triangle_count));
     checkCudaErrors(cudaMemcpy(ptr_device_triangle_ids, triangle_ids, sizeof(int) * triangle_count, cudaMemcpyHostToDevice));
     checkCudaErrors(cudaDeviceSynchronize());
-
+    
     //This could be omitted if the tracing traversal is modified to be compliant with our CPU tree structure.
     //As of right now we're using the same traversal algorithm for both lbvh and binned sah bvh, but the structure is slightly different. 
     //We must therefore first copy the data to the GPU and then update all pointers in the tree to be device, not host.
-    deepCopyTreeToGPU<<<1,1>>>(ptr_device_temp_nodes, internal_nodes_created+1, ptr_device_internal_nodes, ptr_device_leaf_nodes, ptr_device_triangles, triangle_count, ptr_device_triangle_ids);
+    deepCopyTreeToGPU<<<1,1>>>(ptr_device_temp_nodes, 
+        internal_nodes_created, 
+        ptr_device_internal_nodes, 
+        ptr_device_leaf_nodes, 
+        ptr_device_triangles, 
+        internal_nodes_created-leaf_nodes_created, 
+        leaf_nodes_created, 
+        ptr_device_triangle_ids);
+
     checkCudaErrors(cudaDeviceSynchronize());
     checkCudaErrors(cudaFree(ptr_device_triangle_ids));
 
@@ -159,16 +197,15 @@ class SAHBVH{
 };
 
 
-void SAHBVH::splitNode(Node* node, Node* nodes, int start, int end, int* triangle_ids, int* temp_triangle_ids, Triangle* triangles){
+void SAHBVH::splitNode(SAHBVH *bvh, Node* node, Node* nodes, int start, int end, int* triangle_ids, int* temp_triangle_ids, Triangle* triangles, int depth){
   const int number_of_bins = 16;
   const int primitive_count = end - start;
 
-  //Calculate node AABB
   node->aabb           = AABB(Vec3(FLT_MAX, FLT_MAX, FLT_MAX), Vec3(-FLT_MAX, -FLT_MAX, -FLT_MAX));
   AABB centroid_bounds = AABB(Vec3(FLT_MAX, FLT_MAX, FLT_MAX), Vec3(-FLT_MAX, -FLT_MAX, -FLT_MAX));
   
   for(int i = start; i < end; i++){
-    node->aabb.join(triangles[triangle_ids[i]].aabb); //TODO: Centroid or aabb?
+    node->aabb.join(triangles[triangle_ids[i]].aabb);
     centroid_bounds.join(triangles[triangle_ids[i]].centroid);
   }
 
@@ -266,21 +303,25 @@ void SAHBVH::splitNode(Node* node, Node* nodes, int start, int end, int* triangl
     node->start_range = start;
     node->range = end - start;
     node->is_leaf = true;
+    leaf_nodes_created++;
     return;
   }
 
+  //We cannot record the relationships like this when multithreading.
   //Record node relationships.
-  this->internal_nodes_created++;
+  internal_nodes_created++;
   Node* left_child = &nodes[internal_nodes_created];
   left_child->start_range = start;
   left_child->range = split - start;
+  left_child->depth = node->depth + 1;
   node->left_child_i = left_child - nodes;
-  splitNode(left_child, nodes, start, split, triangle_ids, temp_triangle_ids, triangles);
+  work_queue.push(left_child);
 
-  this->internal_nodes_created++;
+  internal_nodes_created++;
   Node* right_child = &nodes[internal_nodes_created];
   right_child->start_range = split;
   right_child->range = end - split;
+  right_child->depth = node->depth + 1;
   node->right_child_i = right_child - nodes;
-  splitNode(right_child, nodes, split, end, triangle_ids, temp_triangle_ids, triangles);
+  work_queue.push(right_child);
 }

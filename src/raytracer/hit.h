@@ -9,4 +9,4 @@ struct RayHit{
   __host__ __device__ RayHit();
 };
 
-__host__ __device__ RayHit::RayHit() {dist = 99999999.0f;}
+__host__ __device__ RayHit::RayHit() {dist = FLT_MAX;}

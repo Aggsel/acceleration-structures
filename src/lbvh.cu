@@ -1,5 +1,6 @@
 #pragma once
 
+#include <chrono>
 #include <thrust/sort.h>
 #include "triangle.h"
 #include "node.h"
@@ -214,7 +215,7 @@ __global__ void calculateAABB(Node* internal_nodes, Node* leaf_nodes, int leaf_c
   Node* parent_node = leaf_nodes[leaf_index].parent;
   assert(parent_node != nullptr);
 
-  parent_node->aabb = leaf_aabb; //BUG: <- sometimes cudaErrorIllegalAddress, due to duplicate morton codes.
+  parent_node->aabb = leaf_aabb;
 
   while(true){
     if(parent_node == nullptr)  //Root reached.
@@ -250,7 +251,6 @@ class LBVH{
     int threads_per_block = 512;
     Vec3 inverse_min_max = 1.0/(scene_bounds.max_bounds - scene_bounds.min_bounds);
     generateMortonCodes<<<triangle_count/threads_per_block+1, threads_per_block>>>(ptr_device_triangles, triangle_count, ptr_device_vertices, scene_bounds.min_bounds, inverse_min_max);
-    checkCudaErrors(cudaDeviceSynchronize());
   }
 
   public:
@@ -281,24 +281,29 @@ class LBVH{
 
   //Returns device ptr to root of tree.
   Node* construct(){
+    using namespace std::chrono;
+
+    steady_clock::time_point timer_start = high_resolution_clock::now();
     const int threads_per_block = 512;
     //1. Generate morton codes for each scene primitive.
     populateMortonCodes();
 
     //2. Sort scene primitives along morton curve.
     thrust::sort(thrust::device, ptr_device_triangles, ptr_device_triangles+triangle_count);
-
     //3. For each internal node in the tree, calculate it's range and split/children.
     constructLBVH<<<(triangle_count-1)/threads_per_block+1, threads_per_block>>>(ptr_device_triangles, ptr_device_internal_nodes, ptr_device_leaf_nodes, triangle_count);
-    checkCudaErrors(cudaDeviceSynchronize());
 
     //4. From each leaf node, traverse the tree towards the root of the tree.
     //   If the branch is the first to reach a given node, stop.
     //   If the branch is second, join the childrens AABB and continue traversal.
     calculateAABB<<<triangle_count/threads_per_block+1, threads_per_block>>>(ptr_device_internal_nodes, ptr_device_leaf_nodes, triangle_count, ptr_device_vertices, ptr_device_visited_node_counters);
     checkCudaErrors(cudaDeviceSynchronize());
+    
+    steady_clock::time_point timer_end = high_resolution_clock::now();
+    long long duration_ms = duration_cast<milliseconds>(timer_end - timer_start).count();
+    long long duration_us = duration_cast<microseconds>(timer_end - timer_start).count();
+    printf("LBVH Construction completed in %llims (%llius)\n", duration_ms, duration_us);
 
-    printf("LBVH Construction completed.\n");
     return ptr_device_internal_nodes;
   }
 };

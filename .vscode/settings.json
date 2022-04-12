@@ -65,6 +65,9 @@
         "iomanip": "cpp",
         "xlocmon": "cpp",
         "xloctime": "cpp",
-        "__undef_macros": "cpp"
+        "__undef_macros": "cpp",
+        "deque": "cpp",
+        "queue": "cpp",
+        "xxatomic": "cpp"
     }
 }

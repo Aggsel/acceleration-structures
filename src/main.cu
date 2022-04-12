@@ -24,7 +24,7 @@
 enum BVH_Type{ none, lbvh, sahbvh };
 
 int main(int argc, char *argv[]){
-  std::string filename = "sample_models/large_210.obj";
+  std::string filename = "sample_models/large_11k.obj";
   int samples_per_pixel = 30;
   int image_height = 512;
   int image_width = 512;
@@ -63,8 +63,7 @@ int main(int argc, char *argv[]){
   Vec3* ptr_device_normals       = obj.createDeviceNormalBuffer();
 
   //BUG/Minor Issue: Calling the constructor for both of these classes will allocate 
-  //                 device memory that might not be used. This should ideally be done
-  //                 using a strategy pattern or similar.
+  //                 device memory that might not be used.
   LBVH lbvh(ptr_device_triangles, obj.triangle_count, ptr_device_vertices, obj.vertex_count, scene_bounding_box);
   SAHBVH sahbvh(ptr_device_triangles, obj.triangle_count, ptr_device_vertices, obj.vertex_count, scene_bounding_box);
 
@@ -73,7 +72,7 @@ int main(int argc, char *argv[]){
   if(bvh_type == BVH_Type::lbvh)
     ptr_device_tree = lbvh.construct();   // Construct Karras 2012
   else if(bvh_type == BVH_Type::sahbvh) 
-    ptr_device_tree = sahbvh.construct(); // Construct Wald   2007 
+    ptr_device_tree = sahbvh.construct(); // Construct Wald   2007
 
 
   // ----------- RENDER -----------

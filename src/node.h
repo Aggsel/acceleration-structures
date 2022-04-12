@@ -14,5 +14,7 @@ struct Node{
   int left_child_i;
   int right_child_i;
 
+  int depth;
+
   Triangle* primitive;
 };
