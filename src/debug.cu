@@ -4,9 +4,6 @@
 #include "third_party/cuda_helpers/helper_cuda.h"
 
 __global__ void d_printNodes(Node* nodes, int size, Triangle* triangles){
-    // int node_index = blockIdx.x * blockDim.x + threadIdx.x;
-    // if(node_index >= size)
-    //     return;
     for (int i = 0; i < size; i++){
         Node* node = &nodes[i];
         printf("Node: %i\tNode: 0x%p\tParent: 0x%p, \tLeft Child: 0x%p, \tRight Child: 0x%p\tMorton: %u Depth: %i IsLeaf: %i AABB: (%f, %f, %f)\n", 
@@ -26,7 +23,6 @@ __global__ void d_printNodes(Node* nodes, int size, Triangle* triangles){
 
 namespace DebugHelper{
     void PrintNodes(Node* node_array, int size, Triangle* leaf_nodes){
-        int threads_per_block = 512;
         d_printNodes<<<1, 1>>>(node_array, size, leaf_nodes);
         cudaDeviceSynchronize();
     }

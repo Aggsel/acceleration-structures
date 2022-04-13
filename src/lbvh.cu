@@ -64,10 +64,8 @@ __device__ int commonPrefix(Triangle *morton_codes, int index1, int index2){
     return 0;
   unsigned int key1 = morton_codes[index1].morton_code;
   unsigned int key2 = morton_codes[index2].morton_code;
-  if(key1 != key2)
-    // printf("Same: Index: %i Index: %i XOR: %i Prefix l: %i\n", index1, index2, index1 ^ index2, __clz(index1 ^ index2));
+  if(key1 != key2)  //Handle duplicate morton codes.
     return __clz(key1 ^ key2);
-  // printf("Dupe: Index: %i (%u) Index: %i (%u) XOR: %u Prefix l: %i\n", index1, key1, index2, key2, index1 ^ index2, __clz(index1 ^ index2));
   return __clz(index1 ^ index2) + 32;
 }
 
@@ -83,7 +81,7 @@ __device__ void determineRange(Triangle *sorted_morton_codes, int total_primitiv
   int prev_delta = commonPrefix(sorted_morton_codes, node_index, node_index-1);
   int d = next_delta - prev_delta < 0 ? -1 : 1;
 
-  //Upper bound
+  //Upper search bound
   int lmax = 128;
   int delta_min = min(next_delta, prev_delta);
   int delta = -1;
@@ -120,10 +118,7 @@ __device__ void determineRange(Triangle *sorted_morton_codes, int total_primitiv
   *range_max = max(node_index, j);
 }
 
-//From https://developer.nvidia.com/blog/thinking-parallel-part-iii-tree-construction-gpu/
 __device__ int findSplit(Triangle *sorted_morton_codes, int first, int last){
-
-  //count leading zeros
   int common_prefix = commonPrefix(sorted_morton_codes, first, last);
 
   int split = first;
@@ -143,17 +138,15 @@ __device__ int findSplit(Triangle *sorted_morton_codes, int first, int last){
   return split;
 }
 
+//From https://developer.nvidia.com/blog/thinking-parallel-part-iii-tree-construction-gpu/
 __global__ void constructLBVH(Triangle *triangles, Node* internal_nodes, Node* leaf_nodes, int primitive_count){
   int node_index = blockIdx.x *blockDim.x + threadIdx.x;
   if(node_index >= primitive_count-1)
     return;
 
-  //Determine the range of the current node by performing a binary search on the
-  //largest common prefix for neighboring morton codes.
   int first, last;
   determineRange(triangles, primitive_count, node_index, &first, &last);
 
-  // Determine where to split the range.
   int split = findSplit(triangles, first, last);
 
   // Select left_child.
@@ -290,6 +283,7 @@ class LBVH{
 
     //2. Sort scene primitives along morton curve.
     thrust::sort(thrust::device, ptr_device_triangles, ptr_device_triangles+triangle_count);
+
     //3. For each internal node in the tree, calculate it's range and split/children.
     constructLBVH<<<(triangle_count-1)/threads_per_block+1, threads_per_block>>>(ptr_device_triangles, ptr_device_internal_nodes, ptr_device_leaf_nodes, triangle_count);
 

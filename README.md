@@ -1,5 +1,8 @@
 # GPU Acceleration Structures
 
+## Requirements
+Requires a Nvidia graphics card and CUDA drivers. The program does not use any API features introduced in newer versions of CUDA, so it'll likely work even on somewhat older versions. It has however only been tested on CUDA 11.6.
+
 ## Build instructions
 Built on windows using:
 * MSVC (19.29)

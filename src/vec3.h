@@ -1,6 +1,5 @@
 #pragma once
 #include "vec2.h"
-#include <algorithm>
 
 class Vec3{
   public:

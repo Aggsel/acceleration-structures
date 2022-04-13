@@ -170,12 +170,10 @@ class SAHBVH{
 
     //This memcpy is inevitable if we construct tree on the cpu and render on the gpu.
     checkCudaErrors(cudaMemcpy(ptr_device_temp_nodes, ptr_host_internal_nodes, nodes_length * sizeof(Node), cudaMemcpyHostToDevice));
-    checkCudaErrors(cudaDeviceSynchronize());
 
     int* ptr_device_triangle_ids;
     checkCudaErrors(cudaMalloc(&ptr_device_triangle_ids, sizeof(int) * triangle_count));
     checkCudaErrors(cudaMemcpy(ptr_device_triangle_ids, triangle_ids, sizeof(int) * triangle_count, cudaMemcpyHostToDevice));
-    checkCudaErrors(cudaDeviceSynchronize());
     
     //This could be omitted if the tracing traversal is modified to be compliant with our CPU tree structure.
     //As of right now we're using the same traversal algorithm for both lbvh and binned sah bvh, but the structure is slightly different. 

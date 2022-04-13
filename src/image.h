@@ -31,7 +31,7 @@ class Image{
         return true;
     }
 
-    // Modified from https://rosettacode.org/wiki/Bitmap/Write_a_PPM_file#C 
+    // Modified from https://rosettacode.org/wiki/Bitmap/Write_a_PPM_file#C
     bool save(char* filename){
         FILE *fp = fopen(filename, "w");
         fprintf(fp, "P3\n%d %d\n255\n", this->width, this->width);
