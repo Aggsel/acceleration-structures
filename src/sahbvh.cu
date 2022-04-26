@@ -136,7 +136,7 @@ class SAHBVH{
   //Returns device ptr to root of tree.
   Node* construct(){
     using namespace std::chrono;
-    printf("Starting SAH Binning construction.\n");
+    // printf("Starting SAH Binning construction.\n");
 
     computeBoundsAndCentroids<<<triangle_count/64+1, 64>>>(ptr_device_triangles, triangle_count, ptr_device_vertex_buffer);
     checkCudaErrors(cudaDeviceSynchronize());
@@ -154,15 +154,13 @@ class SAHBVH{
 
     work_queue.push(root_node);
     steady_clock::time_point start = high_resolution_clock::now();
-
     int num_threads = std::thread::hardware_concurrency();
 
     for (int i = 0; i < num_threads; i++){
       workers.push_back(std::thread([this, i] {
         this->creationThread(this, i);
       }));
-      auto end = std::chrono::steady_clock::now() + 40ms; //BUG: We're creating many threads, and the queue will only be saturated for the first thread.
-      while(std::chrono::steady_clock::now() < end);
+      while(work_queue.size() < num_threads); //HACK: Busy-wait until theres work available for all threads.
     }
     for(int i = 0; i < workers.size(); i++){
       if (workers[i].joinable()){
@@ -170,16 +168,10 @@ class SAHBVH{
       }
     }
 
-    printf("Internal nodes created: %i\n", nodes_created.load());
-    printf("Leaf nodes created: %i\n", leaf_nodes_created.load());
-
     steady_clock::time_point stop = high_resolution_clock::now();
     long long duration_ms = duration_cast<milliseconds>(stop - start).count();
     long long duration_us = duration_cast<microseconds>(stop - start).count();
-    printf("SAH Bin construction completed, took %llims (%llius)\n", duration_ms, duration_us);
-
-    // auto end = std::chrono::steady_clock::now() + 2000ms;
-    // while(std::chrono::steady_clock::now() < end);
+    printf("Binned SAH\t%lli\tms\t%lli\tus\n", duration_ms, duration_us);
 
     //This memcpy is inevitable if we construct tree on the cpu and render on the gpu.
     checkCudaErrors(cudaMemcpy(ptr_device_temp_nodes, ptr_host_internal_nodes, nodes_length * sizeof(Node), cudaMemcpyHostToDevice));
@@ -208,7 +200,7 @@ class SAHBVH{
 };
 
 void SAHBVH::creationThread(SAHBVH* bvh, int thread_id){
-  int nodes_processed = 0;
+  // int nodes_processed = 0;
 
   while(!bvh->work_queue.empty()){
     Node* active_node = bvh->work_queue.pop_front();
@@ -221,9 +213,9 @@ void SAHBVH::creationThread(SAHBVH* bvh, int thread_id){
       this->temp_triangle_ids,
       this->triangles,
       0);
-    nodes_processed++;
+    // nodes_processed++;
   }
-  printf("Thread: %i, Nodes processed: %i\n", thread_id, nodes_processed);
+  // printf("Thread: %i, Nodes processed: %i\n", thread_id, nodes_processed);
 }
 
 void SAHBVH::splitNode(SAHBVH *bvh, Node* node, Node* nodes, int start, int end, int* triangle_ids, int* temp_triangle_ids, Triangle* triangles, int depth){
@@ -337,7 +329,7 @@ void SAHBVH::splitNode(SAHBVH *bvh, Node* node, Node* nodes, int start, int end,
   node->is_leaf = false;
 
   //Record node relationships.
-  int node_index = nodes_created.fetch_add(1)+1;
+  int node_index = ++nodes_created;
   Node* left_child = &nodes[node_index];
   left_child->start_range = start;
   left_child->range = split - start;
@@ -346,7 +338,7 @@ void SAHBVH::splitNode(SAHBVH *bvh, Node* node, Node* nodes, int start, int end,
   node->left_child_i = left_child - nodes;
   work_queue.push(left_child);
 
-  node_index = nodes_created.fetch_add(1)+1;
+  node_index = ++nodes_created;
   Node* right_child = &nodes[node_index];
   right_child->start_range = split;
   right_child->range = end - split;

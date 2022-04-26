@@ -8,11 +8,43 @@
 
 __global__ void d_render(Vec3 *output_image, Camera cam, curandState *rand, RenderConfig config, Vec3 *vertices, Triangle *triangles, int vertex_count, Vec3 *normals);
 __global__ void d_render(Vec3 *output_image, Camera cam, curandState *rand, RenderConfig config, Vec3 *vertices, Triangle *triangles, int vertex_count, Vec3 *normals, Node* bvh_root);
+__global__ void d_render_heatmap(Vec3 *output_image, Camera cam, curandState *rand, RenderConfig config, Vec3 *vertices, Triangle *triangles, int vertex_count, Vec3 *normals, Node* bvh_root);
 __global__ void initKernels(int image_width, int image_height, curandState *rand);
 __device__ Vec3 color(Ray *ray, curandState *rand, int max_depth, Vec3 *vertices, Triangle *triangles, int vertex_count, Vec3 *normals);
 __device__ Vec3 color(Ray *ray, curandState *rand, int max_depth, Vec3 *vertices, int vertex_count, Vec3 *normals, Node* bvh_root);
+__device__ float heatmap(Ray *ray, curandState *rand, int max_depth, Vec3 *vertices, int vertex_count, Vec3 *normals, Node* bvh_root);
 __device__ Vec3 randomInUnitSphere(curandState *rand);
 __device__ bool intersectTri(Ray *ray, RayHit *bestHit, Vec3 v0, Vec3 v1, Vec3 v2, Vec3 n0, Vec3 n1, Vec3 n2);
+
+__global__ void normalize_output_image(Vec3 *output_image, RenderConfig config){
+  int img_size = config.img_height*config.img_width;
+  float max_value = -1.0f;
+  for (int i = 0; i < img_size; i++){
+    max_value = output_image[i].x() > max_value ? output_image[i].x() : max_value;
+  }
+
+  printf("Max Value: %f\n", max_value);
+
+  for (int i = 0; i < img_size; i++){
+    float val = output_image[i].x() / max_value;
+    output_image[i] = Vec3(val, val, val);
+  }
+}
+
+//TODO: Reduce these rendering functions to just one?
+__global__ void d_render_heatmap(Vec3 *output_image, Camera cam, curandState *rand, RenderConfig config, Vec3 *vertices, Triangle *triangles, int vertex_count, Vec3 *normals, Node* bvh_root){
+  int pixel_x = threadIdx.x + blockIdx.x * blockDim.x;
+  int pixel_y = threadIdx.y + blockIdx.y * blockDim.y;
+  if((pixel_x >= config.img_width) || (pixel_y >= config.img_height)) return;
+  int pixel_index = pixel_y*config.img_width + pixel_x;
+
+  curandState local_rand = rand[pixel_index];
+  Vec2 uv = Vec2((pixel_x + 0.2) / (config.img_width-1), (pixel_y+ 0.2) / (config.img_height-1));
+  Ray ray = Ray(Vec3(0,0,0), normalize(cam.lower_left_corner + uv.x()*cam.horizontal + uv.y()*cam.vertical - Vec3(0,0,0)) );
+  float out_col = heatmap(&ray, &local_rand, config.max_bounces, vertices, vertex_count, normals, bvh_root);
+
+  output_image[pixel_index] = Vec3(out_col, out_col, out_col);
+}
 
 __global__ void d_render(Vec3 *output_image, Camera cam, curandState *rand, RenderConfig config, Vec3 *vertices, Triangle *triangles, int vertex_count, Vec3 *normals, Node* bvh_root){
   int pixel_x = threadIdx.x + blockIdx.x * blockDim.x;
@@ -84,6 +116,81 @@ __global__ void initKernels(int image_width, int image_height, unsigned long lon
   int pixel_index = pixel_y*image_width + pixel_x;
 
   curand_init(rand_seed, pixel_index, 0, &rand[pixel_index]);
+}
+
+__device__ float heatmap(Ray *ray, curandState *rand, int max_depth, Vec3 *vertices, int vertex_count, Vec3 *normals, Node* bvh_root) {
+  Node* stack[128];
+  int stack_index = -1;
+  stack_index++;
+  stack[stack_index] = nullptr;
+
+  int nodes_traversed = 0;
+  Node* node = bvh_root;
+
+  RayHit hit;
+  do{
+    Node* left_child = node->left_child;
+    Node* right_child = node->right_child;
+
+    bool left_aabb_intersect = left_child->aabb.intersectRay(*ray);
+    bool right_aabb_intersect = right_child->aabb.intersectRay(*ray);
+
+    if(left_aabb_intersect && left_child->is_leaf){
+      Triangle leaf_primitive = *left_child->primitive;
+      int v0 = leaf_primitive.v0_index;
+      int v1 = leaf_primitive.v1_index;
+      int v2 = leaf_primitive.v2_index;
+
+      RayHit temp_hit;
+      if (intersectTri(ray, &temp_hit, vertices[v0], vertices[v1], vertices[v2],
+                                      normals [v0], normals [v1], normals [v2])){
+        if(temp_hit.dist < hit.dist){
+          hit.dist = temp_hit.dist;
+          hit.normal = temp_hit.normal;
+          hit.pos = temp_hit.pos;
+          hit.uv = temp_hit.uv;
+        }
+      }
+    }
+    if(right_aabb_intersect && right_child->is_leaf){
+      Triangle leaf_primitive = *right_child->primitive;
+      int v0 = leaf_primitive.v0_index;
+      int v1 = leaf_primitive.v1_index;
+      int v2 = leaf_primitive.v2_index;
+
+      RayHit temp_hit;
+      if (intersectTri(ray, &temp_hit, vertices[v0], vertices[v1], vertices[v2],
+                                      normals [v0], normals [v1], normals [v2])){
+        if(temp_hit.dist < hit.dist){
+          hit.dist = temp_hit.dist;
+          hit.normal = temp_hit.normal;
+          hit.pos = temp_hit.pos;
+          hit.uv = temp_hit.uv;
+        }
+      }
+    }
+
+    bool traverse_left = (!left_child->is_leaf) && left_aabb_intersect;
+    bool traverse_right = (!right_child->is_leaf) && right_aabb_intersect;
+
+    if(!traverse_left && !traverse_right){
+      node = stack[stack_index];
+      stack_index--;
+    }
+    else{
+      //Prioritize traversing left branch.
+      node = traverse_left ? left_child : right_child;
+
+      //Push right child onto the stack if both branches should be traversed.
+      if (traverse_left && traverse_right){
+        stack_index++;
+        stack[stack_index] = right_child;
+      }
+    }
+    nodes_traversed+=1.0;
+  }while(node != nullptr);
+
+  return nodes_traversed;
 }
 
 // Traversal: https://developer.nvidia.com/blog/thinking-parallel-part-ii-tree-traversal-gpu/
@@ -307,18 +414,21 @@ class Raytracer{
     }
 
     Vec3* render(Camera cam){
-      printf("Launching rendering kernel...\n");
       d_render<<<blocks, threads>>>(ptr_device_img, cam, d_rand_state, config, ptr_device_vertices, ptr_device_triangles, index_count, ptr_device_normals);
       checkCudaErrors(cudaDeviceSynchronize());
-      printf("Render complete.\n");
       return ptr_device_img;
     }
 
     Vec3* render(Camera cam, Node* bvh_root){
-      printf("Launching rendering kernel...\n");
       d_render<<<blocks, threads>>>(ptr_device_img, cam, d_rand_state, config, ptr_device_vertices, ptr_device_triangles, index_count, ptr_device_normals, bvh_root);
       checkCudaErrors(cudaDeviceSynchronize());
-      printf("Render complete.\n");
+      return ptr_device_img;
+    }
+
+    Vec3* renderTraversalHeatmap(Camera cam, Node* bvh_root){
+      d_render_heatmap<<<blocks, threads>>>(ptr_device_img, cam, d_rand_state, config, ptr_device_vertices, ptr_device_triangles, index_count, ptr_device_normals, bvh_root);
+      checkCudaErrors(cudaDeviceSynchronize());
+      normalize_output_image<<<1,1>>>(ptr_device_img, config);
       return ptr_device_img;
     }
 };

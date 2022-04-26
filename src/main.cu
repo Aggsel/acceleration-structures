@@ -3,6 +3,7 @@
 #define EPSILON FLT_EPSILON
 
 #include <iostream>
+#include <chrono>
 
 #include "aabb.h"
 #include "node.h"
@@ -67,6 +68,8 @@ int main(int argc, char *argv[]){
   LBVH lbvh(ptr_device_triangles, obj.triangle_count, ptr_device_vertices, obj.vertex_count, scene_bounding_box);
   SAHBVH sahbvh(ptr_device_triangles, obj.triangle_count, ptr_device_vertices, obj.vertex_count, scene_bounding_box);
 
+  printf("\nCategory\tTime\tUnit\tTime\tUnit\n"); //Print benchmark output table headers
+
   //Depending on user choice, construct BVH.
   Node* ptr_device_tree;
   if(bvh_type == BVH_Type::lbvh)
@@ -82,9 +85,23 @@ int main(int argc, char *argv[]){
   Camera cam = Camera(config.img_width, config.img_height, 90.0f, 1.0f, Vec3(0,0,0));
   Raytracer raytracer = Raytracer(config, ptr_device_vertices, ptr_device_normals, ptr_device_triangles, obj.index_count);
 
+  //Benchmark rendering
+  std::chrono::steady_clock::time_point start = std::chrono::high_resolution_clock::now();
+
   //Render with traversal if a BVH is selected.
-  Vec3* ptr_device_img = bvh_type == BVH_Type::none ? raytracer.render(cam) : raytracer.render(cam, ptr_device_tree);
+  Vec3* ptr_device_img;
+  if(bvh_type == BVH_Type::none){
+    ptr_device_img = raytracer.render(cam);
+  }
+  else{
+    ptr_device_img = raytracer.renderTraversalHeatmap(cam, ptr_device_tree);
+  }
   
+  std::chrono::steady_clock::time_point stop = std::chrono::high_resolution_clock::now();
+  long long duration_ms = std::chrono::duration_cast<std::chrono::duration<long long, std::milli>>(stop - start).count();
+  long long duration_us = std::chrono::duration_cast<std::chrono::duration<long long, std::micro>>(stop - start).count();
+  printf("Rendering\t%lli\tms\t%lli\tus\n", duration_ms, duration_us);
+
   //Copy framebuffer from device to host and save to disk.
   Image render_output = Image(config.img_width, config.img_height);
   render_output.copyFromDevice(ptr_device_img, config.img_height * config.img_width);
