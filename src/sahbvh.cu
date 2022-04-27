@@ -18,7 +18,7 @@ inline float cost(int N_L, int N_R, float A_L, float A_R);
 
 //Inputs along the selected axis. E.g. tri_centroid for x,y or z depending on the selected axis.
 inline int projectToBin(float k_1, float tri_centroid, float node_min_bounds){
-  return min(max((int) (k_1 * (tri_centroid - node_min_bounds)), 0), 16);
+  return (int) (k_1 * (tri_centroid - node_min_bounds));
 }
 
 inline float cost(int N_L, int N_R, float A_L, float A_R){
@@ -141,6 +141,8 @@ class SAHBVH{
     this->triangles = (Triangle*)malloc(sizeof(Triangle) * triangle_count);
     checkCudaErrors(cudaMemcpy(triangles, ptr_device_triangles, sizeof(Triangle) * triangle_count, cudaMemcpyDeviceToHost));
 
+    steady_clock::time_point start = high_resolution_clock::now();
+
     Node* root_node = new Node();
     root_node->start_range = 0;
     root_node->depth = 0;
@@ -151,7 +153,6 @@ class SAHBVH{
     ptr_host_internal_nodes[0] = *root_node;
 
     work_queue.push(root_node);
-    steady_clock::time_point start = high_resolution_clock::now();
     int num_threads = std::thread::hardware_concurrency();
 
     for (int i = 0; i < num_threads; i++){
@@ -236,7 +237,7 @@ void SAHBVH::splitNode(SAHBVH *bvh, Node* node, Node* nodes, int start, int end,
 
   //Compute k_1 for the selected axis.
   float k_1 = number_of_bins * (1.0 - FLT_EPSILON) / 
-                (node->aabb.max_bounds.e[axis] - node->aabb.min_bounds.e[axis]);
+                ((centroid_bounds.max_bounds.e[axis] - centroid_bounds.min_bounds.e[axis]) + FLT_EPSILON);
 
   //Initialize per bin triangle counts and aabbs.
   int bin_triangle_counts[number_of_bins];
@@ -251,9 +252,8 @@ void SAHBVH::splitNode(SAHBVH *bvh, Node* node, Node* nodes, int start, int end,
     int bin_index = projectToBin( k_1, 
                                   triangles[triangle_ids[i]].centroid.e[axis],
                                   centroid_bounds.min_bounds.e[axis]);
-
     bin_triangle_counts[bin_index]++;
-    bin_aabbs[bin_index].join(triangles[triangle_ids[i]].aabb);
+    bin_aabbs[bin_index].join(triangles[triangle_ids[i]].centroid);
   }
 
   //Sweep from left -->>

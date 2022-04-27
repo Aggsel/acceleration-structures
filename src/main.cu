@@ -82,8 +82,10 @@ int main(int argc, char *argv[]){
   // ----------- RENDER -----------
   if(render_type == Render_Type::NONE)
     return 0;
+
   RenderConfig config(image_width, image_height, samples_per_pixel, max_bounces, 1337);
-  Camera cam = Camera(config.img_width, config.img_height, 90.0f, 1.0f, Vec3(0,0,0));
+
+  Camera cam = Camera(config.img_width, config.img_height, 90.0f, 1.0f, Vec3(0,0,6));
   Raytracer raytracer = Raytracer(config, ptr_device_vertices, ptr_device_normals, ptr_device_triangles, obj.index_count);
 
   //Benchmark rendering
@@ -110,6 +112,7 @@ int main(int argc, char *argv[]){
   //Copy framebuffer from device to host and save to disk.
   Image render_output = Image(config.img_width, config.img_height);
   render_output.copyFromDevice(ptr_device_img, config.img_height * config.img_width);
+
   render_output.save(output_filename);
 
   cudaFree(ptr_device_triangles);

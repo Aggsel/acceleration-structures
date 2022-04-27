@@ -32,7 +32,7 @@ class Image{
     }
 
     // Modified from https://rosettacode.org/wiki/Bitmap/Write_a_PPM_file#C
-    bool save(char* filename){
+    bool save(const char* filename){
         FILE *fp = fopen(filename, "w");
         fprintf(fp, "P3\n%d %d\n255\n", this->width, this->width);
         for (int j = this->height-1; j >= 0; j--) {

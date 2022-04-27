@@ -33,7 +33,7 @@ __global__ void normalize_output_image(Vec3 *output_image, RenderConfig config){
   printf("Average Traversed Steps: %f\n", avg);
 
   for (int i = 0; i < img_size; i++){
-    float val = output_image[i].x() / max_value;
+    float val = output_image[i].x() / 263.0;
     output_image[i] = Vec3(val, val, val);
   }
 }
@@ -47,7 +47,7 @@ __global__ void d_render_heatmap(Vec3 *output_image, Camera cam, curandState *ra
 
   curandState local_rand = rand[pixel_index];
   Vec2 uv = Vec2((pixel_x + 0.2) / (config.img_width-1), (pixel_y+ 0.2) / (config.img_height-1));
-  Ray ray = Ray(Vec3(0,0,0), normalize(cam.lower_left_corner + uv.x()*cam.horizontal + uv.y()*cam.vertical - Vec3(0,0,0)) );
+  Ray ray = Ray(cam.origin, normalize(cam.lower_left_corner + uv.x()*cam.horizontal + uv.y()*cam.vertical - cam.origin) );
   float out_col = color_heatmap(&ray, &local_rand, config.max_bounces, vertices, vertex_count, normals, bvh_root);
 
   output_image[pixel_index] = Vec3(out_col, out_col, out_col);
