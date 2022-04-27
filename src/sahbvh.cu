@@ -51,14 +51,12 @@ __global__ void deepCopyTreeToGPU(Node* input_nodes, int nodes_length, Node* out
   for (int i = nodes_length; i >= 0; i--){
     Node node = input_nodes[i];
     if(node.is_leaf){
-      // printf("Leaf: Start range: %i, Leaf nodes: %i Nodes left: %i, Internal Nodes %i \n", node.start_range, leaf_nodes, i, internal_nodes);
       node.primitive = &triangles[triangle_ids[node.start_range]];
       output_leaf_nodes[leaf_nodes] = node;
       input_nodes[i].parent = &output_leaf_nodes[leaf_nodes]; //leave a trail for the parent to pick up.
       leaf_nodes--;
     }
     else{
-      // printf("Left Child %i, Right Child: %i, Internal Nodes %i, Index: %i\n", node.left_child_i, node.right_child_i, internal_nodes, i);
       node.left_child = input_nodes[node.left_child_i].parent;
       node.right_child = input_nodes[node.right_child_i].parent;
       output_internal_nodes[internal_nodes] = node;
@@ -200,8 +198,6 @@ class SAHBVH{
 };
 
 void SAHBVH::creationThread(SAHBVH* bvh, int thread_id){
-  // int nodes_processed = 0;
-
   while(!bvh->work_queue.empty()){
     Node* active_node = bvh->work_queue.pop_front();
     splitNode(this,
@@ -213,9 +209,7 @@ void SAHBVH::creationThread(SAHBVH* bvh, int thread_id){
       this->temp_triangle_ids,
       this->triangles,
       0);
-    // nodes_processed++;
   }
-  // printf("Thread: %i, Nodes processed: %i\n", thread_id, nodes_processed);
 }
 
 void SAHBVH::splitNode(SAHBVH *bvh, Node* node, Node* nodes, int start, int end, int* triangle_ids, int* temp_triangle_ids, Triangle* triangles, int depth){
@@ -246,11 +240,11 @@ void SAHBVH::splitNode(SAHBVH *bvh, Node* node, Node* nodes, int start, int end,
 
   //Initialize per bin triangle counts and aabbs.
   int bin_triangle_counts[number_of_bins];
-  for (int i = 0; i < number_of_bins; i++)
-    bin_triangle_counts[i] = 0;
   AABB bin_aabbs[number_of_bins];
-  for (int i = 0; i < number_of_bins; i++)
+  for (int i = 0; i < number_of_bins; i++){
+    bin_triangle_counts[i] = 0;
     bin_aabbs[i] = AABB(Vec3(FLT_MAX, FLT_MAX, FLT_MAX), Vec3(-FLT_MAX, -FLT_MAX, -FLT_MAX));
+  }
 
   //Calculate N_l, N_r, A_l & A_r for all triangles for all bins.
   for(int i = start; i < end; i++){

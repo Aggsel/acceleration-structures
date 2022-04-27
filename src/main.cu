@@ -22,7 +22,8 @@
 #include "lbvh.cu"
 #include "sahbvh.cu"
 
-enum BVH_Type{ none, lbvh, sahbvh };
+enum class BVH_Type{NONE = 0, LBVH = 1, SAHBVH = 2};
+enum class Render_Type{NONE = 0, NORMAL = 1, HEATMAP = 2};
 
 int main(int argc, char *argv[]){
   std::string filename = "sample_models/large_11k.obj";
@@ -30,9 +31,9 @@ int main(int argc, char *argv[]){
   int image_height = 512;
   int image_width = 512;
   int max_bounces = 5;
-  int should_render = 1;
+  Render_Type render_type = Render_Type::NORMAL;
   char* output_filename = "output.ppm";
-  BVH_Type bvh_type = lbvh;
+  BVH_Type bvh_type = BVH_Type::LBVH;
 
   // ----------- CL ARGUMENTS  -----------
   for (size_t i = 2; i < argc; i+=2){
@@ -53,7 +54,7 @@ int main(int argc, char *argv[]){
     if(!strcmp(flag, "-bvh"))
       bvh_type = (BVH_Type)atoi(parameter);
     if(!strcmp(flag, "-r") || !strcmp(flag, "--render"))
-      should_render = (BVH_Type)atoi(parameter);
+      render_type = (Render_Type)atoi(parameter);
   }
 
   //Try to read .obj from disk and create necessary geometry buffers on the GPU.
@@ -72,14 +73,14 @@ int main(int argc, char *argv[]){
 
   //Depending on user choice, construct BVH.
   Node* ptr_device_tree;
-  if(bvh_type == BVH_Type::lbvh)
+  if(bvh_type == BVH_Type::LBVH)
     ptr_device_tree = lbvh.construct();   // Construct Karras 2012
-  else if(bvh_type == BVH_Type::sahbvh) 
+  else if(bvh_type == BVH_Type::SAHBVH) 
     ptr_device_tree = sahbvh.construct(); // Construct Wald   2007
 
 
   // ----------- RENDER -----------
-  if(should_render == 0)
+  if(render_type == Render_Type::NONE)
     return 0;
   RenderConfig config(image_width, image_height, samples_per_pixel, max_bounces, 1337);
   Camera cam = Camera(config.img_width, config.img_height, 90.0f, 1.0f, Vec3(0,0,0));
@@ -90,11 +91,15 @@ int main(int argc, char *argv[]){
 
   //Render with traversal if a BVH is selected.
   Vec3* ptr_device_img;
-  if(bvh_type == BVH_Type::none){
+
+  if(bvh_type == BVH_Type::NONE){
     ptr_device_img = raytracer.render(cam);
   }
-  else{
+  else if(render_type == Render_Type::HEATMAP){
     ptr_device_img = raytracer.renderTraversalHeatmap(cam, ptr_device_tree);
+  }
+  else{
+    ptr_device_img = raytracer.render(cam, ptr_device_tree);
   }
   
   std::chrono::steady_clock::time_point stop = std::chrono::high_resolution_clock::now();

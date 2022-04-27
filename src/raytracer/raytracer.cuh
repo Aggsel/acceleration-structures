@@ -12,18 +12,25 @@ __global__ void d_render_heatmap(Vec3 *output_image, Camera cam, curandState *ra
 __global__ void initKernels(int image_width, int image_height, curandState *rand);
 __device__ Vec3 color(Ray *ray, curandState *rand, int max_depth, Vec3 *vertices, Triangle *triangles, int vertex_count, Vec3 *normals);
 __device__ Vec3 color(Ray *ray, curandState *rand, int max_depth, Vec3 *vertices, int vertex_count, Vec3 *normals, Node* bvh_root);
-__device__ float heatmap(Ray *ray, curandState *rand, int max_depth, Vec3 *vertices, int vertex_count, Vec3 *normals, Node* bvh_root);
+__device__ float color_heatmap(Ray *ray, curandState *rand, int max_depth, Vec3 *vertices, int vertex_count, Vec3 *normals, Node* bvh_root);
 __device__ Vec3 randomInUnitSphere(curandState *rand);
 __device__ bool intersectTri(Ray *ray, RayHit *bestHit, Vec3 v0, Vec3 v1, Vec3 v2, Vec3 n0, Vec3 n1, Vec3 n2);
 
 __global__ void normalize_output_image(Vec3 *output_image, RenderConfig config){
   int img_size = config.img_height*config.img_width;
   float max_value = -1.0f;
+  float min_value = FLT_MAX;
+  float avg = 0.0f;
   for (int i = 0; i < img_size; i++){
     max_value = output_image[i].x() > max_value ? output_image[i].x() : max_value;
+    min_value = output_image[i].x() < min_value ? output_image[i].x() : min_value;
+    avg += output_image[i].x();
   }
+  avg /= img_size;
 
-  printf("Max Value: %f\n", max_value);
+  printf("Maximum Traversed Steps: %f\n", max_value);
+  printf("Minimum Traversed Steps: %f\n", min_value);
+  printf("Average Traversed Steps: %f\n", avg);
 
   for (int i = 0; i < img_size; i++){
     float val = output_image[i].x() / max_value;
@@ -41,7 +48,7 @@ __global__ void d_render_heatmap(Vec3 *output_image, Camera cam, curandState *ra
   curandState local_rand = rand[pixel_index];
   Vec2 uv = Vec2((pixel_x + 0.2) / (config.img_width-1), (pixel_y+ 0.2) / (config.img_height-1));
   Ray ray = Ray(Vec3(0,0,0), normalize(cam.lower_left_corner + uv.x()*cam.horizontal + uv.y()*cam.vertical - Vec3(0,0,0)) );
-  float out_col = heatmap(&ray, &local_rand, config.max_bounces, vertices, vertex_count, normals, bvh_root);
+  float out_col = color_heatmap(&ray, &local_rand, config.max_bounces, vertices, vertex_count, normals, bvh_root);
 
   output_image[pixel_index] = Vec3(out_col, out_col, out_col);
 }
@@ -118,7 +125,7 @@ __global__ void initKernels(int image_width, int image_height, unsigned long lon
   curand_init(rand_seed, pixel_index, 0, &rand[pixel_index]);
 }
 
-__device__ float heatmap(Ray *ray, curandState *rand, int max_depth, Vec3 *vertices, int vertex_count, Vec3 *normals, Node* bvh_root) {
+__device__ float color_heatmap(Ray *ray, curandState *rand, int max_depth, Vec3 *vertices, int vertex_count, Vec3 *normals, Node* bvh_root) {
   Node* stack[128];
   int stack_index = -1;
   stack_index++;

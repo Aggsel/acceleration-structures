@@ -52,5 +52,6 @@ Although will likely still work on older versions. Requires a Nvidia GPU, Pascal
         Whether or not to render the scene.
         Defaults to: 1
             0 - Do not render.
-            1 - Render.
+            1 - Render normal (lambertian diffuse).
+            2 - Render BVH traversal heatmap.
 ```
