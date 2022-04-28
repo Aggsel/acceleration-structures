@@ -6,13 +6,12 @@
 #include "raytracer/render_config.h"
 #include "third_party/cuda_helpers/helper_cuda.h"
 
-__global__ void d_render(Vec3 *output_image, Camera cam, curandState *rand, RenderConfig config, Vec3 *vertices, Triangle *triangles, int vertex_count, Vec3 *normals);
 __global__ void d_render(Vec3 *output_image, Camera cam, curandState *rand, RenderConfig config, Vec3 *vertices, Triangle *triangles, int vertex_count, Vec3 *normals, Node* bvh_root);
 __global__ void d_render_heatmap(Vec3 *output_image, Camera cam, curandState *rand, RenderConfig config, Vec3 *vertices, Triangle *triangles, int vertex_count, Vec3 *normals, Node* bvh_root);
 __global__ void initKernels(int image_width, int image_height, curandState *rand);
 __device__ Vec3 color(Ray *ray, curandState *rand, int max_depth, Vec3 *vertices, Triangle *triangles, int vertex_count, Vec3 *normals);
 __device__ Vec3 color(Ray *ray, curandState *rand, int max_depth, Vec3 *vertices, int vertex_count, Vec3 *normals, Node* bvh_root);
-__device__ float color_heatmap(Ray *ray, curandState *rand, int max_depth, Vec3 *vertices, int vertex_count, Vec3 *normals, Node* bvh_root);
+__device__ float color_heatmap(Ray *ray, Vec3 *vertices, int vertex_count, Vec3 *normals, Node* bvh_root);
 __device__ Vec3 randomInUnitSphere(curandState *rand);
 __device__ bool intersectTri(Ray *ray, RayHit *bestHit, Vec3 v0, Vec3 v1, Vec3 v2, Vec3 n0, Vec3 n1, Vec3 n2);
 
@@ -33,7 +32,7 @@ __global__ void normalize_output_image(Vec3 *output_image, RenderConfig config){
   printf("Average Traversed Steps: %f\n", avg);
 
   for (int i = 0; i < img_size; i++){
-    float val = output_image[i].x() / 263.0;
+    float val = output_image[i].x() / max_value;
     output_image[i] = Vec3(val, val, val);
   }
 }
@@ -45,57 +44,30 @@ __global__ void d_render_heatmap(Vec3 *output_image, Camera cam, curandState *ra
   if((pixel_x >= config.img_width) || (pixel_y >= config.img_height)) return;
   int pixel_index = pixel_y*config.img_width + pixel_x;
 
-  curandState local_rand = rand[pixel_index];
-  Vec2 uv = Vec2((pixel_x + 0.2) / (config.img_width-1), (pixel_y+ 0.2) / (config.img_height-1));
+  Vec2 uv = Vec2((pixel_x + 0.5) / (config.img_width-1), (pixel_y+ 0.5) / (config.img_height-1));
   Ray ray = Ray(cam.origin, normalize(cam.lower_left_corner + uv.x()*cam.horizontal + uv.y()*cam.vertical - cam.origin) );
-  float out_col = color_heatmap(&ray, &local_rand, config.max_bounces, vertices, vertex_count, normals, bvh_root);
+  float out_col = color_heatmap(&ray, vertices, vertex_count, normals, bvh_root);
 
   output_image[pixel_index] = Vec3(out_col, out_col, out_col);
 }
 
-__global__ void d_render(Vec3 *output_image, Camera cam, curandState *rand, RenderConfig config, Vec3 *vertices, Triangle *triangles, int vertex_count, Vec3 *normals, Node* bvh_root){
+__global__ void d_render(Vec3 *output_image, Camera cam, curandState *rand, RenderConfig config, Vec3 *vertices, Triangle *triangles, int vertex_count, Vec3 *normals, bool render_with_bvh, Node* bvh_root){
   int pixel_x = threadIdx.x + blockIdx.x * blockDim.x;
   int pixel_y = threadIdx.y + blockIdx.y * blockDim.y;
   if((pixel_x >= config.img_width) || (pixel_y >= config.img_height)) return;
   int pixel_index = pixel_y*config.img_width + pixel_x;
 
   curandState local_rand = rand[pixel_index];
-
   Vec3 result = Vec3(0.0, 0.0, 0.0);
+  Vec3 out_col;
   for (int i = 0; i < config.samples_per_pixel; i++){
     Vec2 uv = Vec2((pixel_x + curand_uniform(&local_rand)) / (config.img_width-1), (pixel_y+ curand_uniform(&local_rand)) / (config.img_height-1));
-    Ray ray = Ray(Vec3(0,0,0), normalize(cam.lower_left_corner + uv.x()*cam.horizontal + uv.y()*cam.vertical - Vec3(0,0,0)) );
-    Vec3 out_col = color(&ray, &local_rand, config.max_bounces, vertices, vertex_count, normals, bvh_root);
+    Ray ray = Ray(Vec3(0,0,0), normalize(cam.lower_left_corner + uv.x()*cam.horizontal + uv.y()*cam.vertical - Vec3(0,0,0)));
 
-    float r = clamp01(out_col.x());
-    float g = clamp01(out_col.y());
-    float b = clamp01(out_col.z());
-    result = result + Vec3(r,g,b);
-  }
-  
-  //Gamma correction
-  float scale = 1.0 / config.samples_per_pixel;
-  float r = sqrt(scale * result.x());
-  float g = sqrt(scale * result.y());
-  float b = sqrt(scale * result.z());
-  result = Vec3(r,g,b);
-
-  output_image[pixel_index] = result;
-}
-
-__global__ void d_render(Vec3 *output_image, Camera cam, curandState *rand, RenderConfig config, Vec3 *vertices, Triangle *triangles, int vertex_count, Vec3 *normals){
-  int pixel_x = threadIdx.x + blockIdx.x * blockDim.x;
-  int pixel_y = threadIdx.y + blockIdx.y * blockDim.y;
-  if((pixel_x >= config.img_width) || (pixel_y >= config.img_height)) return;
-  int pixel_index = pixel_y*config.img_width + pixel_x;
-
-  curandState local_rand = rand[pixel_index];
-
-  Vec3 result = Vec3(0.0, 0.0, 0.0);
-  for (int i = 0; i < config.samples_per_pixel; i++){
-    Vec2 uv = Vec2((pixel_x + curand_uniform(&local_rand)) / (config.img_width-1), (pixel_y+ curand_uniform(&local_rand)) / (config.img_height-1));
-    Ray ray = Ray(Vec3(0,0,0), normalize(cam.lower_left_corner + uv.x()*cam.horizontal + uv.y()*cam.vertical - Vec3(0,0,0)) );
-    Vec3 out_col = color(&ray, &local_rand, config.max_bounces, vertices, triangles, vertex_count, normals);
+    if(render_with_bvh)
+      out_col = color(&ray, &local_rand, config.max_bounces, vertices, vertex_count, normals, bvh_root);
+    else
+      out_col = color(&ray, &local_rand, config.max_bounces, vertices, triangles, vertex_count, normals);
 
     float r = clamp01(out_col.x());
     float g = clamp01(out_col.y());
@@ -125,7 +97,7 @@ __global__ void initKernels(int image_width, int image_height, unsigned long lon
   curand_init(rand_seed, pixel_index, 0, &rand[pixel_index]);
 }
 
-__device__ float color_heatmap(Ray *ray, curandState *rand, int max_depth, Vec3 *vertices, int vertex_count, Vec3 *normals, Node* bvh_root) {
+__device__ float color_heatmap(Ray *ray, Vec3 *vertices, int vertex_count, Vec3 *normals, Node* bvh_root) {
   Node* stack[128];
   int stack_index = -1;
   stack_index++;
@@ -210,7 +182,6 @@ __device__ Vec3 color(Ray *ray, curandState *rand, int max_depth, Vec3 *vertices
     stack_index++;
     stack[stack_index] = nullptr;
 
-    int nodes_traversed = 0;
     Node* node = bvh_root;
 
     bool was_hit = false;
@@ -277,7 +248,6 @@ __device__ Vec3 color(Ray *ray, curandState *rand, int max_depth, Vec3 *vertices
           stack[stack_index] = right_child;
         }
       }
-      nodes_traversed++;
     }while(node != nullptr);
 
     if(was_hit){
@@ -297,6 +267,7 @@ __device__ Vec3 color(Ray *ray, curandState *rand, int max_depth, Vec3 *vertices
   return Vec3(0.0, 0.0, 0.0);
 }
 
+//Naive ray tracing implementation (brute force).
 __device__ Vec3 color(Ray *ray, curandState *rand, int max_depth, Vec3 *vertices, Triangle *triangles, int vertex_count, Vec3 *normals) {
   float cur_attenuation = 1.0f;
   for(int i = 0; i < max_depth; i++) {
@@ -420,14 +391,14 @@ class Raytracer{
         cudaFree(d_rand_state);
     }
 
-    Vec3* render(Camera cam){
-      d_render<<<blocks, threads>>>(ptr_device_img, cam, d_rand_state, config, ptr_device_vertices, ptr_device_triangles, index_count, ptr_device_normals);
+    Vec3* render(Camera cam, Node* bvh_root){
+      d_render<<<blocks, threads>>>(ptr_device_img, cam, d_rand_state, config, ptr_device_vertices, ptr_device_triangles, index_count, ptr_device_normals, true, bvh_root);
       checkCudaErrors(cudaDeviceSynchronize());
       return ptr_device_img;
     }
 
-    Vec3* render(Camera cam, Node* bvh_root){
-      d_render<<<blocks, threads>>>(ptr_device_img, cam, d_rand_state, config, ptr_device_vertices, ptr_device_triangles, index_count, ptr_device_normals, bvh_root);
+    Vec3* render(Camera cam){
+      d_render<<<blocks, threads>>>(ptr_device_img, cam, d_rand_state, config, ptr_device_vertices, ptr_device_triangles, index_count, ptr_device_normals, false, nullptr);
       checkCudaErrors(cudaDeviceSynchronize());
       return ptr_device_img;
     }

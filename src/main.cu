@@ -72,7 +72,7 @@ int main(int argc, char *argv[]){
   printf("\nCategory\tTime\tUnit\tTime\tUnit\n"); //Print benchmark output table headers
 
   //Depending on user choice, construct BVH.
-  Node* ptr_device_tree;
+  Node* ptr_device_tree = nullptr;
   if(bvh_type == BVH_Type::LBVH)
     ptr_device_tree = lbvh.construct();   // Construct Karras 2012
   else if(bvh_type == BVH_Type::SAHBVH) 
@@ -91,17 +91,16 @@ int main(int argc, char *argv[]){
   //Benchmark rendering
   std::chrono::steady_clock::time_point start = std::chrono::high_resolution_clock::now();
 
-  //Render with traversal if a BVH is selected.
   Vec3* ptr_device_img;
-
-  if(bvh_type == BVH_Type::NONE){
-    ptr_device_img = raytracer.render(cam);
-  }
-  else if(render_type == Render_Type::HEATMAP){
+  if(render_type == Render_Type::HEATMAP){
     ptr_device_img = raytracer.renderTraversalHeatmap(cam, ptr_device_tree);
   }
   else{
-    ptr_device_img = raytracer.render(cam, ptr_device_tree);
+    //Will brute force render if tree is nullptr.
+    if(bvh_type == BVH_Type::NONE)
+      ptr_device_img = raytracer.render(cam);
+    else
+      ptr_device_img = raytracer.render(cam, ptr_device_tree);
   }
   
   std::chrono::steady_clock::time_point stop = std::chrono::high_resolution_clock::now();

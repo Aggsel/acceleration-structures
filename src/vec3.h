@@ -25,6 +25,7 @@ __host__ __device__ Vec3 cross(Vec3 a, Vec3 b);
 __host__ __device__ Vec3 normalize(Vec3 v);
 __host__ __device__ Vec3 min(Vec3 v1, Vec3 v2);
 __host__ __device__ Vec3 max(Vec3 v1, Vec3 v2);
+__host__ __device__ Vec3 lerp(Vec3 v1, Vec3 v2, float t);
 
 __host__ __device__ Vec3::Vec3(){}
 __host__ __device__ Vec3::Vec3(float e0, float e1, float e2) { e[0] = e0; e[1] = e1; e[2] = e2; }
@@ -38,6 +39,9 @@ __host__ __device__ float Vec3::z() { return e[2]; }
 __host__ __device__ Vec3 operator*(float lhs, Vec3 rhs){
   return Vec3(lhs*rhs.x(), lhs*rhs.y(), lhs*rhs.z());
 }
+// __host__ __device__ Vec3 operator*(Vec3 lhs, float rhs){
+//   return Vec3(rhs*lhs.x(), rhs*lhs.y(), rhs*lhs.z());
+// }
 __host__ __device__ Vec3 operator/(Vec3 lhs, float rhs){
   return Vec3(lhs.x()/rhs, lhs.y()/rhs, lhs.z()/rhs);
 }
@@ -89,3 +93,7 @@ __host__ __device__ Vec3 max(Vec3 v1, Vec3 v2){
                 max(v1.y(), v2.y()),
                 max(v1.z(), v2.z()) );
 }
+
+// __host__ __device__ Vec3 lerp(Vec3 v1, Vec3 v2, float t){
+//   return v1 * t + v2 * (1.f-t);
+// }
