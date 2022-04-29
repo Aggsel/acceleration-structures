@@ -62,7 +62,7 @@ __global__ void d_render(Vec3 *output_image, Camera cam, curandState *rand, Rend
   Vec3 out_col;
   for (int i = 0; i < config.samples_per_pixel; i++){
     Vec2 uv = Vec2((pixel_x + curand_uniform(&local_rand)) / (config.img_width-1), (pixel_y+ curand_uniform(&local_rand)) / (config.img_height-1));
-    Ray ray = Ray(Vec3(0,0,0), normalize(cam.lower_left_corner + uv.x()*cam.horizontal + uv.y()*cam.vertical - Vec3(0,0,0)));
+    Ray ray = Ray(cam.origin, normalize(cam.lower_left_corner + uv.x()*cam.horizontal + uv.y()*cam.vertical - cam.origin));
 
     if(render_with_bvh)
       out_col = color(&ray, &local_rand, config.max_bounces, vertices, vertex_count, normals, bvh_root);
