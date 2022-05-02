@@ -8,7 +8,7 @@ Built on windows using:
 * MSVC (19.29)
 * CUDA (11.6)
 
-Although will likely still work on older versions. Requires a Nvidia GPU, Pascal architecture or later.
+Although will likely still work on older versions. Requires an Nvidia GPU.
 
 ```bash
     nvcc src/main.cu -o build/main
@@ -54,4 +54,19 @@ Although will likely still work on older versions. Requires a Nvidia GPU, Pascal
             0 - Do not render.
             1 - Render normal (lambertian diffuse).
             2 - Render BVH traversal heatmap.
+```
+
+## Benchmarking
+
+### Dependencies
+Requires Python >= 3.6. The algorithms can be benchmarked by running the script ```benchmark.py```. Before running any benchmarks however, install any missing dependencies:
+```bash
+    python -m pip install -r requirements.txt
+```
+
+### Running the benchmarks
+The benchmarking script assumes that the binary is located at ```build/main.exe```.
+The benchmarks can then be run:
+```bash
+    python benchmark.py
 ```
