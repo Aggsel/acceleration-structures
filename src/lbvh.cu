@@ -294,9 +294,8 @@ class LBVH{
     checkCudaErrors(cudaDeviceSynchronize());
     
     steady_clock::time_point timer_end = high_resolution_clock::now();
-    long long duration_ms = duration_cast<milliseconds>(timer_end - timer_start).count();
     long long duration_us = duration_cast<microseconds>(timer_end - timer_start).count();
-    printf("LBVH Karras\t%lli\tms\t%lli\tus\n", duration_ms, duration_us);
+    printf("%lli", duration_us);
 
     return ptr_device_internal_nodes;
   }

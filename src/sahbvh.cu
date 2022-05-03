@@ -134,8 +134,6 @@ class SAHBVH{
   //Returns device ptr to root of tree.
   Node* construct(){
     using namespace std::chrono;
-    // printf("Starting SAH Binning construction.\n");
-
     computeBoundsAndCentroids<<<triangle_count/64+1, 64>>>(ptr_device_triangles, triangle_count, ptr_device_vertex_buffer);
     checkCudaErrors(cudaDeviceSynchronize());
     this->triangles = (Triangle*)malloc(sizeof(Triangle) * triangle_count);
@@ -168,9 +166,8 @@ class SAHBVH{
     }
 
     steady_clock::time_point stop = high_resolution_clock::now();
-    long long duration_ms = duration_cast<milliseconds>(stop - start).count();
     long long duration_us = duration_cast<microseconds>(stop - start).count();
-    printf("Binned SAH\t%lli\tms\t%lli\tus\n", duration_ms, duration_us);
+    printf("%lli", duration_us);
 
     //This memcpy is inevitable if we construct tree on the cpu and render on the gpu.
     checkCudaErrors(cudaMemcpy(ptr_device_temp_nodes, ptr_host_internal_nodes, nodes_length * sizeof(Node), cudaMemcpyHostToDevice));

@@ -1,4 +1,7 @@
 import subprocess, datetime, os
+import matplotlib.pyplot as plt
+import pandas as pd
+import numpy as np
 from typing import Tuple, Dict
 from enum import Enum
 
@@ -17,6 +20,7 @@ benchmark_output_dir = "Benchmark Results/Renders/"
 model_dir = "sample_models"
 model = "sponza.obj"
 benchmark_results = []
+benchmark_results_header = ["BVH", "Model", "Construction Time (ms)", "Construction Time (us)", "Render Time (ms)", "Render Time (us)", "SPP", "Rays Emitted", "Traversed Nodes (total)", "Traversed Nodes (min)", "Traversed Nodes (max)", "Triangle Count"]
 
 def benchmark(number_of_times = 1):
     def inner(func):
@@ -33,6 +37,77 @@ def extract_timing(input_line : str) -> Tuple[int, int]:
     result_us = input_line.split("\t")[-2]
     return result_ms, result_us
 
+def add_benchmark_result(bvh : BVH, model, construction_time_us, render_time_us, spp, rays_emitted, traversed_nodes, traversed_nodes_min, traversed_nodes_max, tri_count):
+    row = [ bvh.name,
+            model,
+            int(construction_time_us)/1000.0,
+            construction_time_us,
+            int(render_time_us)/1000.0,
+            render_time_us,
+            spp,
+            rays_emitted,
+            traversed_nodes,
+            traversed_nodes_min,
+            traversed_nodes_max,
+            tri_count]
+
+    benchmark_results.append(row)
+
+def run_single_benchmark(   bvh = BVH.LBVH,
+                            r_type : RenderType = RenderType.NORMAL,
+                            model_dir = model_dir,
+                            model = model,
+                            spp = 30,
+                            max_depth = 5,
+                            image_size = (512, 512)):
+    timestamp = datetime.datetime.now()
+    filename = f"{benchmark_output_dir}Output-{bvh.name}-{r_type.name} {timestamp.strftime('%Y-%m-%d %H%M%S')}.ppm"
+    output = subprocess.check_output([executable_path, 
+                                "-o", filename, 
+                                "-i", f"{model_dir}/{model}", 
+                                "-bvh", str(bvh.value), 
+                                "-r", str(r_type.value),
+                                "-spp", str(spp),
+                                "--max-depth", str(max_depth),
+                                "-iw", str(image_size[0]),
+                                "-ih", str(image_size[1])])
+
+    output = output.decode("utf-8")
+    output_lines = output.splitlines()
+
+    triangle_count = 0
+    construction_time = 0
+    rendering_time = 0
+
+    for line in output_lines:
+        if(line.find("triangles") != -1):
+            triangle_count = int(line[line.find("= ")+2:-1])
+        if(line.find("\t\t") != -1):
+            construction_time = line[0:line.find("\t\t")]
+            rendering_time = line[line.find("\t\t"):-1]
+
+    with open("output.txt") as f:
+        lines = f.readlines()
+    #Strip newlines, parse to int and filter empty rows.
+    lines_int = [int(line.rstrip("\n")) for line in lines if line != "\n"]
+    arr = np.array(lines_int)
+    median = np.median(arr)
+    min = np.min(arr)
+    max = np.max(arr)
+    std = np.std(arr)
+    total_traversed = np.sum(arr)
+
+    add_benchmark_result(   bvh,
+                            model,
+                            construction_time,
+                            rendering_time,
+                            spp,
+                            0,  #rays emitted
+                            total_traversed,
+                            min,
+                            max,
+                            triangle_count)
+
 def run_benchmark( r_type : RenderType = RenderType.NORMAL,
                     model_dir = model_dir,
                     model = model,
@@ -40,73 +115,26 @@ def run_benchmark( r_type : RenderType = RenderType.NORMAL,
                     max_depth = 5,
                     image_size = (512, 512)) -> None:
     bvh = BVH.LBVH
-    timestamp = datetime.datetime.now()
-    filename = f"{benchmark_output_dir}Output-{bvh.name}-{r_type.name} {timestamp.strftime('%Y-%m-%d %H%M%S')}.ppm"
-
-    result = {"BVH" : bvh, "RenderType": r_type}
-    output = subprocess.check_output([executable_path, 
-                                "-o", filename, 
-                                "-i", f"{model_dir}/{model}", 
-                                "-bvh", str(bvh.value), 
-                                "-r", str(r_type.value),
-                                "-spp", str(spp),
-                                "--max-depth", str(max_depth),
-                                "-iw", str(image_size[0]),
-                                "-ih", str(image_size[1])])
-    output = output.decode("utf-8")
-
-    output_lines = output[output.find("Unit\r\n")+6:-1].splitlines()
-    output_lines = output_lines[0:-1]
-
-    construction_timing = extract_timing(output_lines[0])
-    rendering_timing = extract_timing(output_lines[1])
-    result["construction_ms"] = construction_timing[0]
-    result["construction_us"] = construction_timing[1]
-    result["rendering_ms"] = rendering_timing[0]
-    result["rendering_us"] = rendering_timing[1]
-    benchmark_results.append(result)
-
+    run_single_benchmark(bvh, r_type, model_dir, model, spp, max_depth, image_size)
     bvh = BVH.SAH
-    filename = f"{benchmark_output_dir}Output-{bvh.name}-{r_type.name} {timestamp.strftime('%Y-%m-%d %H%M%S')}.ppm"
-    result = {"BVH" : bvh, "RenderType": r_type}
-    output = subprocess.check_output([executable_path, 
-                                "-o", filename, 
-                                "-i", f"{model_dir}/{model}", 
-                                "-bvh", str(bvh.value), 
-                                "-r", str(r_type.value),
-                                "-spp", str(spp),
-                                "--max-depth", str(max_depth),
-                                "-iw", str(image_size[0]),
-                                "-ih", str(image_size[1])])
-    output = output.decode("utf-8")
-
-    output_lines = output[output.find("Unit\r\n")+6:-1].splitlines()
-    output_lines = output_lines[0:-1]
-
-    construction_timing = extract_timing(output_lines[0])
-    rendering_timing = extract_timing(output_lines[1])
-    result["construction_ms"] = construction_timing[0]
-    result["construction_us"] = construction_timing[1]
-    result["rendering_ms"] = rendering_timing[0]
-    result["rendering_us"] = rendering_timing[1]
-    benchmark_results.append(result)
+    run_single_benchmark(bvh, r_type, model_dir, model, spp, max_depth, image_size)
 
 @benchmark(10)
 def sponza_1():
-    run_benchmark(spp = 1, max_depth = 1, model="sponza.obj")
+    run_benchmark(r_type = RenderType.HEATMAP, model="sponza.obj")
 
 @benchmark(10)
 def sponza_2():
-    run_benchmark(spp = 200, max_depth = 1, model="sponza.obj")
+    run_benchmark(r_type = RenderType.HEATMAP, model="sponza.obj")
 
 def main():
     os.makedirs(benchmark_output_dir, exist_ok=True)
 
     sponza_1()
-    sponza_2()
 
-    for result in benchmark_results:
-        print(result)
+    df = pd.DataFrame(benchmark_results)
+    df.columns = benchmark_results_header
+    df.to_csv("Benchmark_Results.tsv", sep="\t")
 
 if __name__ == "__main__":
     main()

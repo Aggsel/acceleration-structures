@@ -15,24 +15,20 @@ __device__ float color_heatmap(Ray *ray, Vec3 *vertices, int vertex_count, Vec3 
 __device__ Vec3 randomInUnitSphere(curandState *rand);
 __device__ bool intersectTri(Ray *ray, RayHit *bestHit, Vec3 v0, Vec3 v1, Vec3 v2, Vec3 n0, Vec3 n1, Vec3 n2);
 
-__global__ void normalize_output_image(Vec3 *output_image, RenderConfig config){
+__global__ void normalize_output_image(Vec3 *raw_traversal_data, Vec3 *output_image, RenderConfig config){
   int img_size = config.img_height*config.img_width;
   float max_value = -1.0f;
   float min_value = FLT_MAX;
   float avg = 0.0f;
   for (int i = 0; i < img_size; i++){
-    max_value = output_image[i].x() > max_value ? output_image[i].x() : max_value;
-    min_value = output_image[i].x() < min_value ? output_image[i].x() : min_value;
-    avg += output_image[i].x();
+    max_value = raw_traversal_data[i].x() > max_value ? raw_traversal_data[i].x() : max_value;
+    min_value = raw_traversal_data[i].x() < min_value ? raw_traversal_data[i].x() : min_value;
+    avg += raw_traversal_data[i].x();
   }
   avg /= img_size;
 
-  printf("Maximum Traversed Steps: %f\n", max_value);
-  printf("Minimum Traversed Steps: %f\n", min_value);
-  printf("Average Traversed Steps: %f\n", avg);
-
   for (int i = 0; i < img_size; i++){
-    float val = output_image[i].x() / max_value;
+    float val = raw_traversal_data[i].x() / max_value;
     output_image[i] = Vec3(val, val, val);
   }
 }
@@ -403,10 +399,14 @@ class Raytracer{
       return ptr_device_img;
     }
 
-    Vec3* renderTraversalHeatmap(Camera cam, Node* bvh_root){
-      d_render_heatmap<<<blocks, threads>>>(ptr_device_img, cam, d_rand_state, config, ptr_device_vertices, ptr_device_triangles, index_count, ptr_device_normals, bvh_root);
+    Vec3* renderTraversalHeatmap(Camera cam, Node* bvh_root, Vec3** device_traversal_statistics){
+      int image_size = config.img_width*config.img_height;
+      checkCudaErrors(cudaMalloc(device_traversal_statistics, image_size*sizeof(Vec3)));
+      d_render_heatmap<<<blocks, threads>>>(*device_traversal_statistics, cam, d_rand_state, config, ptr_device_vertices, ptr_device_triangles, index_count, ptr_device_normals, bvh_root);
       checkCudaErrors(cudaDeviceSynchronize());
-      normalize_output_image<<<1,1>>>(ptr_device_img, config);
+      
+      normalize_output_image<<<1,1>>>(*device_traversal_statistics, ptr_device_img, config);
+      checkCudaErrors(cudaDeviceSynchronize());
       return ptr_device_img;
     }
 };

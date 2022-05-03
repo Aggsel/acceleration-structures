@@ -69,7 +69,7 @@ int main(int argc, char *argv[]){
   LBVH lbvh(ptr_device_triangles, obj.triangle_count, ptr_device_vertices, obj.vertex_count, scene_bounding_box);
   SAHBVH sahbvh(ptr_device_triangles, obj.triangle_count, ptr_device_vertices, obj.vertex_count, scene_bounding_box);
 
-  printf("\nCategory\tTime\tUnit\tTime\tUnit\n"); //Print benchmark output table headers
+  printf("Constr (us)\tRender (us)\n"); //Print benchmark output table headers
 
   //Depending on user choice, construct BVH.
   Node* ptr_device_tree = nullptr;
@@ -93,7 +93,19 @@ int main(int argc, char *argv[]){
 
   Vec3* ptr_device_img;
   if(render_type == Render_Type::HEATMAP){
-    ptr_device_img = raytracer.renderTraversalHeatmap(cam, ptr_device_tree);
+    Vec3* device_traversal_statistics = nullptr;
+    ptr_device_img = raytracer.renderTraversalHeatmap(cam, ptr_device_tree, &device_traversal_statistics);
+    
+    int image_size = config.img_width * config.img_height;
+    Vec3* host_traversal_statistics = (Vec3*)malloc(image_size * sizeof(Vec3));
+    checkCudaErrors(cudaMemcpy(host_traversal_statistics, device_traversal_statistics, image_size * sizeof(Vec3), cudaMemcpyDeviceToHost));
+    FILE *fp = fopen("traversal_steps.txt", "w");
+    for (int i = 0; i < config.img_width * config.img_height; i++) {
+      int steps = (int)host_traversal_statistics[i].x();
+      fprintf(fp, "%i\n", steps);
+    }
+    fprintf(fp, "\n");
+    fclose(fp);
   }
   else{
     //Will brute force render if tree is nullptr.
@@ -104,9 +116,8 @@ int main(int argc, char *argv[]){
   }
   
   std::chrono::steady_clock::time_point stop = std::chrono::high_resolution_clock::now();
-  long long duration_ms = std::chrono::duration_cast<std::chrono::duration<long long, std::milli>>(stop - start).count();
   long long duration_us = std::chrono::duration_cast<std::chrono::duration<long long, std::micro>>(stop - start).count();
-  printf("Rendering\t%lli\tms\t%lli\tus\n", duration_ms, duration_us);
+  printf("\t\t%lli\n", duration_us);
 
   //Copy framebuffer from device to host and save to disk.
   Image render_output = Image(config.img_width, config.img_height);
