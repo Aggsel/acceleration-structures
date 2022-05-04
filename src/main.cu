@@ -31,6 +31,9 @@ int main(int argc, char *argv[]){
   int image_height = 512;
   int image_width = 512;
   int max_bounces = 5;
+  float cam_x = 0.0;
+  float cam_y = 0.0;
+  float cam_z = 0.0;
   Render_Type render_type = Render_Type::NORMAL;
   char* output_filename = "output.ppm";
   BVH_Type bvh_type = BVH_Type::LBVH;
@@ -55,6 +58,12 @@ int main(int argc, char *argv[]){
       bvh_type = (BVH_Type)atoi(parameter);
     if(!strcmp(flag, "-r") || !strcmp(flag, "--render"))
       render_type = (Render_Type)atoi(parameter);
+    if(!strcmp(flag, "-x"))
+      cam_x = atof(parameter);
+    if(!strcmp(flag, "-y"))
+      cam_y = atof(parameter);
+    if(!strcmp(flag, "-z"))
+      cam_z = atof(parameter);
   }
 
   //Try to read .obj from disk and create necessary geometry buffers on the GPU.
@@ -85,7 +94,7 @@ int main(int argc, char *argv[]){
 
   RenderConfig config(image_width, image_height, samples_per_pixel, max_bounces, 1337);
 
-  Camera cam = Camera(config.img_width, config.img_height, 90.0f, 1.0f, Vec3(0,0,-2));
+  Camera cam = Camera(config.img_width, config.img_height, 90.0f, 1.0f, Vec3(cam_x, cam_y, cam_z));
   Raytracer raytracer = Raytracer(config, ptr_device_vertices, ptr_device_normals, ptr_device_triangles, obj.index_count);
 
   //Benchmark rendering
@@ -108,7 +117,6 @@ int main(int argc, char *argv[]){
     fclose(fp);
   }
   else{
-    //Will brute force render if tree is nullptr.
     if(bvh_type == BVH_Type::NONE)
       ptr_device_img = raytracer.render(cam);
     else
