@@ -54,6 +54,18 @@ Although will likely still work on older versions. Requires an Nvidia GPU.
             0 - Do not render.
             1 - Render normal (lambertian diffuse).
             2 - Render BVH traversal heatmap.
+    
+    -x <float>, -y <float>, -z <float>
+        Specify world position of the camera by supplying either x, y and/or z coordinates.
+        Defaults to: 0.0
+
+    --normalize <int>
+        When rendering BVH traversal heatmap, you sometimes want to normalize the 
+        output image with regards to some arbitrary max value. This is useful when
+        rendering an animation and the entire image sequence pixel values should be 
+        normalized according to the maximum steps traversed throughout the animation 
+        (as opposed to per frame normalization, which could result in flickering).
+            Defaults to: The maximum number of steps traversed during the frame rendered.
 ```
 
 ## Benchmarking

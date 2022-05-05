@@ -60,7 +60,8 @@ def run_single_benchmark(   bvh = BVH.LBVH,
                             image_size = (512, 512),
                             filename = "",
                             include_in_benchmark = True,
-                            pos = (0,0,0)):
+                            pos = (0,0,0),
+                            custom_normalize = -1):
     timestamp = datetime.datetime.now()
     if(filename == ""):
         filename = f"{benchmark_output_dir}Output-{bvh.name}-{r_type.name} {timestamp.strftime('%Y-%m-%d %H%M%S')}.ppm"
@@ -75,7 +76,8 @@ def run_single_benchmark(   bvh = BVH.LBVH,
                                 "-ih", str(image_size[1]),
                                 "-x", str(pos[0]),
                                 "-y", str(pos[1]),
-                                "-z", str(pos[2])])
+                                "-z", str(pos[2]),
+                                "--normalize", str(custom_normalize)])
 
     if(not include_in_benchmark):
         return
@@ -139,7 +141,7 @@ def lerp_v3(v1, v2, t):
 # This is really inefficient as we're rerunning the program each time.
 # It's however the easiest way atm to implement animation rendering without
 # adding support in the actual program.
-def animate(model, output_dir, bvh : BVH, r_type, origin, target, frames, spp = 1, max_depth = 1, image_size = (512, 512), output_filename="Animation", include_in_benchmark=False):
+def animate(model, output_dir, bvh : BVH, r_type, origin, target, frames, spp = 1, max_depth = 1, image_size = (512, 512), output_filename="Animation", include_in_benchmark=False, custom_normalize = -1):
     os.makedirs(output_dir, exist_ok=True)
 
     joined_benchmarks = []
@@ -149,7 +151,7 @@ def animate(model, output_dir, bvh : BVH, r_type, origin, target, frames, spp = 
         pos = lerp_v3(origin, target, t)
 
         filename = f"{output_dir}/animation-{frame:04d}.ppm"
-        run_single_benchmark(bvh, r_type, model_dir, model, spp, max_depth, image_size, filename, include_in_benchmark, pos = pos)
+        run_single_benchmark(bvh, r_type, model_dir, model, spp, max_depth, image_size, filename, include_in_benchmark, pos = pos, custom_normalize=custom_normalize)
         if(not include_in_benchmark):
             continue
 
@@ -181,11 +183,12 @@ def main():
                 "Render", 
                 BVH.LBVH, 
                 RenderType.HEATMAP, 
-                origin=(-3,0,-2), 
-                target=(3,0,-4), 
-                frames=100,
-                output_filename="Animation-LBVH-sponza.obj",
-                include_in_benchmark=True)
+                origin=(-3,0,0), 
+                target=(3,2,0), 
+                frames=50,
+                output_filename="Animation-normalized",
+                include_in_benchmark=True,
+                custom_normalize = 377)
 
     # animate(    "sponza.obj", 
     #             "Render", 

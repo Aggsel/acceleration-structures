@@ -34,6 +34,7 @@ int main(int argc, char *argv[]){
   float cam_x = 0.0;
   float cam_y = 0.0;
   float cam_z = 0.0;
+  int custom_normalization = -1;
   Render_Type render_type = Render_Type::NORMAL;
   char* output_filename = "output.ppm";
   BVH_Type bvh_type = BVH_Type::LBVH;
@@ -64,6 +65,8 @@ int main(int argc, char *argv[]){
       cam_y = atof(parameter);
     if(!strcmp(flag, "-z"))
       cam_z = atof(parameter);
+    if(!strcmp(flag, "--normalize"))
+      custom_normalization = atoi(parameter);
   }
 
   //Try to read .obj from disk and create necessary geometry buffers on the GPU.
@@ -103,7 +106,7 @@ int main(int argc, char *argv[]){
   Vec3* ptr_device_img;
   if(render_type == Render_Type::HEATMAP){
     Vec3* device_traversal_statistics = nullptr;
-    ptr_device_img = raytracer.renderTraversalHeatmap(cam, ptr_device_tree, &device_traversal_statistics);
+    ptr_device_img = raytracer.renderTraversalHeatmap(cam, ptr_device_tree, &device_traversal_statistics, custom_normalization);
     
     int image_size = config.img_width * config.img_height;
     Vec3* host_traversal_statistics = (Vec3*)malloc(image_size * sizeof(Vec3));

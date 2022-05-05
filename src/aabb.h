@@ -40,52 +40,25 @@ __device__ __host__ float AABB::surfaceArea(){
     return max(size.x() * size.y() + size.x() * size.z() + size.y() * size.z() * 0.01, 0.0);
 }
 
-//https://www.scratchapixel.com/lessons/3d-basic-rendering/minimal-ray-tracer-rendering-simple-shapes/ray-box-intersection
+//https://gamedev.stackexchange.com/questions/18436/most-efficient-aabb-vs-ray-collision-algorithms
 __device__ __host__ bool AABB::intersectRay(Ray ray){
-    float tmin = (min_bounds.x() - ray.org.x()) / ray.dir.x(); 
-    float tmax = (max_bounds.x() - ray.org.x()) / ray.dir.x(); 
+    Vec3 dirfrac;
+    dirfrac.e[0] = 1.0f / ray.dir.x();
+    dirfrac.e[1] = 1.0f / ray.dir.y();
+    dirfrac.e[2] = 1.0f / ray.dir.z();
+    float t1 = (this->min_bounds.x() - ray.org.x())*dirfrac.x();
+    float t2 = (this->max_bounds.x() - ray.org.x())*dirfrac.x();
+    float t3 = (this->min_bounds.y() - ray.org.y())*dirfrac.y();
+    float t4 = (this->max_bounds.y() - ray.org.y())*dirfrac.y();
+    float t5 = (this->min_bounds.z() - ray.org.z())*dirfrac.z();
+    float t6 = (this->max_bounds.z() - ray.org.z())*dirfrac.z();
 
-    if (tmin > tmax){
-        float temp = tmax;
-        tmax = tmin;
-        tmin = temp;
-    }
+    float tmin = max(max(min(t1, t2), min(t3, t4)), min(t5, t6));
+    float tmax = min(min(max(t1, t2), max(t3, t4)), max(t5, t6));
 
-    float tymin = (min_bounds.y() - ray.org.y()) / ray.dir.y(); 
-    float tymax = (max_bounds.y() - ray.org.y()) / ray.dir.y(); 
-
-    if (tymin > tymax){
-        float temp = tymax;
-        tymax = tymin;
-        tymin = temp;
-    }
-
-    if ((tmin > tymax) || (tymin > tmax)) 
-        return false; 
-
-    if (tymin > tmin) 
-        tmin = tymin; 
-
-    if (tymax < tmax) 
-        tmax = tymax; 
-
-    float tzmin = (min_bounds.z() - ray.org.z()) / ray.dir.z(); 
-    float tzmax = (max_bounds.z() - ray.org.z()) / ray.dir.z(); 
-
-    if (tzmin > tzmax){
-        float temp = tzmax;
-        tzmax = tzmin;
-        tzmin = temp;
-    }
-
-    if ((tmin > tzmax) || (tzmin > tmax)) 
-        return false; 
-
-    if (tzmin > tmin) 
-        tmin = tzmin; 
-
-    if (tzmax < tmax) 
-        tmax = tzmax; 
-
-    return true; 
+    if (tmax < 0)
+        return false;
+    if (tmin > tmax)
+        return false;
+    return true;
 }
