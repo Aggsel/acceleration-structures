@@ -14,6 +14,12 @@ Although will likely still work on older versions. Requires an Nvidia GPU.
     nvcc src/main.cu -o build/main
 ```
 
+Include debugging symbols by passing the `Zi` flag to MSVC via the NVCC `-Xcomplier` argument (obviously only applicable on windows when compiling using MSVC):
+
+```bash
+    nvcc.exe -Xcompiler "/Zi" -o build/main src/main.cu
+```
+
 ## Command line arguments
 
 ```bash
@@ -82,3 +88,8 @@ The benchmarks can then be run:
 ```bash
     python benchmark.py
 ```
+
+### Animations
+Additionally, the benchmarking file can be used to create camera animations. By default the animation tool will interpolate the camera position between two positions and render out a .ppm image sequence for each frame. The image sequence will then be encoded to a h264 .mp4 file, this step requires [ffmpeg](https://ffmpeg.org/) to be installed and present in your ```PATH``` environment variable.
+
+To reduce flickering while rendering heatmap animations, the animation tool should be used together with the ```--normalize``` flag (see section [command line arguments](#command-line-arguments) for more information).

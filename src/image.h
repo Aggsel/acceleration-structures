@@ -34,7 +34,7 @@ class Image{
     // Modified from https://rosettacode.org/wiki/Bitmap/Write_a_PPM_file#C
     bool save(const char* filename){
         FILE *fp = fopen(filename, "w");
-        fprintf(fp, "P3\n%d %d\n255\n", this->width, this->width);
+        fprintf(fp, "P3\n%d %d\n255\n", this->width, this->height);
         for (int j = this->height-1; j >= 0; j--) {
             for (int i = 0; i < this->width; i++) {
             size_t pixel_index = j*this->width + i;

@@ -162,7 +162,8 @@ def animate(model, output_dir, bvh : BVH, r_type, origin, target, frames, spp = 
         joined_benchmarks.append(lines_int)
     
     joined_benchmarks = np.array(joined_benchmarks)
-    print(f"Sum:{np.sum(joined_benchmarks)}\nMin:{np.min(joined_benchmarks)}\nMax:{np.max(joined_benchmarks)}\nAvg:{np.average(joined_benchmarks)}\nStd:{np.std(joined_benchmarks)}\n")
+    # TODO: Log these results in someway.
+    print(f"\nSum:{np.sum(joined_benchmarks)}\nMin:{np.min(joined_benchmarks)}\nMax:{np.max(joined_benchmarks)}\nAvg:{np.average(joined_benchmarks)}\nStd:{np.std(joined_benchmarks)}\n")
 
     return_code = subprocess.call([
         "ffmpeg",
@@ -179,27 +180,25 @@ def animate(model, output_dir, bvh : BVH, r_type, origin, target, frames, spp = 
 def main():
     os.makedirs(benchmark_output_dir, exist_ok=True)
     
-    animate(    "sponza.obj", 
-                "Render", 
-                BVH.LBVH, 
-                RenderType.HEATMAP, 
-                origin=(-3,0,0), 
-                target=(3,2,0), 
+    # animate(    "sponza.obj",
+    #             "Render",
+    #             BVH.LBVH,
+    #             RenderType.HEATMAP,
+    #             origin=(-3,0,0),
+    #             target=(3,2,0),
+    #             frames=50,
+    #             output_filename="output",
+    #             include_in_benchmark=True)
+    animate(    "sponza.obj",
+                "Render",
+                BVH.LBVH,
+                RenderType.HEATMAP,
+                origin=(-3,0,10),
+                target=(3,0,10),
                 frames=50,
-                output_filename="Animation-normalized",
+                output_filename="output",
                 include_in_benchmark=True,
-                custom_normalize = 377)
-
-    # animate(    "sponza.obj", 
-    #             "Render", 
-    #             BVH.SAH, 
-    #             RenderType.HEATMAP, 
-    #             (-3,0,-2), 
-    #             (3,0,-4), 
-    #             100, 
-    #             image_size=(512, 
-    #             512), 
-    #             output_filename="Animation-SAH-sponza.obj")
+                image_size=(512,512))
 
     # scenes = ["sponza.obj"]
     # for scene in scenes:
