@@ -1,7 +1,8 @@
 #pragma once
 #include "vec3.h"
+#include "macros.h"
 
-struct RayHit{
+struct ALIGN(16) RayHit{
   Vec3 pos;
   Vec3 normal;
   float dist;

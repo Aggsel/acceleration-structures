@@ -1,8 +1,9 @@
 #pragma once
 #include "vec3.h"
 #include "raytracer/ray.h"
+#include "macros.h"
 
-class AABB{
+class ALIGN(16) AABB{
     public:
     Vec3 min_bounds;
     Vec3 max_bounds;
@@ -15,7 +16,7 @@ class AABB{
     __device__ __host__ void join(Vec3 vec);
     __device__ __host__ float surfaceArea();
     __device__ __host__ static AABB join(AABB aabb_1, AABB aabb_2);
-    __device__ __host__ bool intersectRay(Ray ray);
+    __device__ bool intersectRay(Ray ray);
 };
 
 __device__ __host__ void AABB::join(AABB otherAABB){
@@ -41,11 +42,11 @@ __device__ __host__ float AABB::surfaceArea(){
 }
 
 //https://gamedev.stackexchange.com/questions/18436/most-efficient-aabb-vs-ray-collision-algorithms
-__device__ __host__ bool AABB::intersectRay(Ray ray){
+__device__ bool AABB::intersectRay(Ray ray){
     Vec3 dirfrac;
-    dirfrac.e[0] = 1.0f / ray.dir.x();
-    dirfrac.e[1] = 1.0f / ray.dir.y();
-    dirfrac.e[2] = 1.0f / ray.dir.z();
+    dirfrac[0] = 1.0f / ray.dir.x();
+    dirfrac[1] = 1.0f / ray.dir.y();
+    dirfrac[2] = 1.0f / ray.dir.z();
     float t1 = (this->min_bounds.x() - ray.org.x())*dirfrac.x();
     float t2 = (this->max_bounds.x() - ray.org.x())*dirfrac.x();
     float t3 = (this->min_bounds.y() - ray.org.y())*dirfrac.y();

@@ -1,7 +1,8 @@
 #pragma once
 #include "vec3.h"
+#include "macros.h"
 
-struct Triangle{
+struct ALIGN(16) Triangle{
   public:
   unsigned int morton_code;
   int v0_index;
@@ -12,5 +13,5 @@ struct Triangle{
 };
 __host__ __device__ inline bool operator< (const Triangle& lhs, const Triangle& rhs){ return lhs.morton_code < rhs.morton_code; }
 __host__ __device__ inline bool operator> (const Triangle& lhs, const Triangle& rhs){ return rhs < lhs; }
-__host__ __device__ inline bool operator<=(const Triangle& lhs, const Triangle& rhs){ return !(lhs > rhs); }
+__host__ __device__ inline bool operator<=(const Triangle& lhs, const Triangle& rhs){ return !(lhs > rhs); }  //BUG: (?) is this really correct?
 __host__ __device__ inline bool operator>=(const Triangle& lhs, const Triangle& rhs){ return !(lhs < rhs); }

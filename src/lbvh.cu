@@ -49,9 +49,9 @@ __global__ void generateMortonCodes(Triangle* triangles, int triangle_count, Vec
   Vec3 v2 = ptr_device_vertex_buffer[tri.v2_index];
   Vec3 centroid = (v0 + v1 + v2) / 3.0;
 
-  centroid.e[0] = (centroid.x() - scene_bounds_min.x()) * inverse_min_max.x();
-  centroid.e[1] = (centroid.y() - scene_bounds_min.y()) * inverse_min_max.y();
-  centroid.e[2] = (centroid.z() - scene_bounds_min.z()) * inverse_min_max.z();
+  centroid[0] = (centroid.x() - scene_bounds_min.x()) * inverse_min_max.x();
+  centroid[1] = (centroid.y() - scene_bounds_min.y()) * inverse_min_max.y();
+  centroid[2] = (centroid.z() - scene_bounds_min.z()) * inverse_min_max.z();
   triangles[node_index].morton_code = mortonCode(centroid);
 
   Vec3 vertex_bounds_min = min(min(v0, v1), v2);
@@ -242,7 +242,7 @@ class LBVH{
 
   void populateMortonCodes(){
     int threads_per_block = 512;
-    Vec3 inverse_min_max = 1.0/(scene_bounds.max_bounds - scene_bounds.min_bounds);
+    Vec3 inverse_min_max = 1.0f/(scene_bounds.max_bounds - scene_bounds.min_bounds);
     generateMortonCodes<<<triangle_count/threads_per_block+1, threads_per_block>>>(ptr_device_triangles, triangle_count, ptr_device_vertices, scene_bounds.min_bounds, inverse_min_max);
   }
 

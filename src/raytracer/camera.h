@@ -1,7 +1,8 @@
 #pragma once
 #include "vec3.h"
+#include "macros.h"
 
-struct Camera{
+struct ALIGN(16) Camera{
   public:
     float viewport_height;
     float viewport_width;

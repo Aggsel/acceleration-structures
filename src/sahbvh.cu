@@ -152,7 +152,6 @@ class SAHBVH{
 
     work_queue.push(root_node);
     int num_threads = std::thread::hardware_concurrency();
-
     for (int i = 0; i < num_threads; i++){
       workers.push_back(std::thread([this, i] {
         this->creationThread(this, i);
@@ -235,7 +234,7 @@ void SAHBVH::splitNode(SAHBVH *bvh, Node* node, Node* nodes, int start, int end,
 
   //Compute k_1 for the selected axis.
   float k_1 = number_of_bins * (1.0 - FLT_EPSILON) / 
-                ((centroid_bounds.max_bounds.e[axis] - centroid_bounds.min_bounds.e[axis]) + FLT_EPSILON);
+                ((centroid_bounds.max_bounds[axis] - centroid_bounds.min_bounds[axis]) + FLT_EPSILON);
 
   //Initialize per bin triangle counts and aabbs.
   int bin_triangle_counts[number_of_bins];
@@ -247,9 +246,11 @@ void SAHBVH::splitNode(SAHBVH *bvh, Node* node, Node* nodes, int start, int end,
 
   //Calculate N_l, N_r, A_l & A_r for all triangles for all bins.
   for(int i = start; i < end; i++){
+    float DEBUG_CENTROID = triangles[triangle_ids[i]].centroid[axis];
+    float DEBUG_MINBOUNDS = centroid_bounds.min_bounds[axis];
     int bin_index = projectToBin( k_1, 
-                                  triangles[triangle_ids[i]].centroid.e[axis],
-                                  centroid_bounds.min_bounds.e[axis]);
+                                  triangles[triangle_ids[i]].centroid[axis],
+                                  centroid_bounds.min_bounds[axis]);
     bin_triangle_counts[bin_index]++;
     bin_aabbs[bin_index].join(triangles[triangle_ids[i]].centroid);
   }
@@ -274,8 +275,8 @@ void SAHBVH::splitNode(SAHBVH *bvh, Node* node, Node* nodes, int start, int end,
   float min_cost = FLT_MAX;
   int split_index = 0;
 
-  float bin_width = size.e[axis] / number_of_bins;
-  float split_position = centroid_bounds.min_bounds.e[axis] + (bin_width*split_index);
+  float bin_width = size[axis] / number_of_bins;
+  float split_position = centroid_bounds.min_bounds[axis] + (bin_width*split_index);
 
   for (int i = number_of_bins-2; i >= 0; i--){
     int primitives_left = tri_count_l_sweep[i];
@@ -291,7 +292,7 @@ void SAHBVH::splitNode(SAHBVH *bvh, Node* node, Node* nodes, int start, int end,
     }
   }
 
-  split_position = centroid_bounds.min_bounds.e[axis] + (bin_width*split_index);
+  split_position = centroid_bounds.min_bounds[axis] + (bin_width*split_index);
 
   //Copy triangle ids to temporary array.
   for (int i = start; i < end; i++)
@@ -301,7 +302,7 @@ void SAHBVH::splitNode(SAHBVH *bvh, Node* node, Node* nodes, int start, int end,
   int left_i = start;
   int right_i = end-1;
   for (int i = start; i < end; i++){
-    if(triangles[temp_triangle_ids[i]].centroid.e[axis] <= split_position){
+    if(triangles[temp_triangle_ids[i]].centroid[axis] <= split_position){
       triangle_ids[left_i] = temp_triangle_ids[i];
       left_i++;
     }

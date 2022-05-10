@@ -1,8 +1,9 @@
 #pragma once
 #include "triangle.h"
 #include "aabb.h"
+#include "macros.h"
 
-struct Node{
+struct ALIGN(16) Node{
   Node* left_child;
   Node* right_child;
   Node* parent;

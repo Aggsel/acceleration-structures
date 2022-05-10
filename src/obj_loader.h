@@ -56,13 +56,13 @@ class ObjLoader{
 			float x = attrib.vertices[i  ];
 			float y = attrib.vertices[i+1];
 			float z = attrib.vertices[i+2];
-			min_bounds.e[0] = min(min_bounds.x(), x);
-			min_bounds.e[1] = min(min_bounds.y(), y);
-			min_bounds.e[2] = min(min_bounds.z(), z);
+			min_bounds[0] = min(min_bounds.x(), x);
+			min_bounds[1] = min(min_bounds.y(), y);
+			min_bounds[2] = min(min_bounds.z(), z);
 
-			max_bounds.e[0] = max(max_bounds.x(), x);
-			max_bounds.e[1] = max(max_bounds.y(), y);
-			max_bounds.e[2] = max(max_bounds.z(), z);
+			max_bounds[0] = max(max_bounds.x(), x);
+			max_bounds[1] = max(max_bounds.y(), y);
+			max_bounds[2] = max(max_bounds.z(), z);
 		}
 		scene_bounding_box = AABB::AABB(min_bounds, max_bounds);
 		Vec3 size = max_bounds - min_bounds;
@@ -101,14 +101,30 @@ class ObjLoader{
   Vec3* ObjLoader::createDeviceVertexBuffer(){
     Vec3 *ptr_device_vertices = nullptr;
     cudaMalloc(&ptr_device_vertices, vertex_count * sizeof(Vec3));
-    cudaMemcpy(ptr_device_vertices, attrib.vertices.data(), vertex_count * sizeof(Vec3), cudaMemcpyHostToDevice);
+
+    Vec3* vertices = (Vec3*)malloc(vertex_count * sizeof(Vec3));
+    for (int i = 0; i < vertex_count*3; i+=3){
+      vertices[i/3] = Vec3(attrib.vertices[i], attrib.vertices[i+1], attrib.vertices[i+2]);
+    }
+
+    cudaMemcpy(ptr_device_vertices, vertices, vertex_count * sizeof(Vec3), cudaMemcpyHostToDevice);
+    free(vertices);
+    
     return ptr_device_vertices;
   }
 
   Vec3* ObjLoader::createDeviceNormalBuffer(){
     Vec3 *ptr_device_normals = nullptr;
     cudaMalloc(&ptr_device_normals, normals_count * sizeof(Vec3));
-    cudaMemcpy(ptr_device_normals, attrib.normals.data(), normals_count * sizeof(Vec3), cudaMemcpyHostToDevice);
+
+    Vec3* normals = (Vec3*)malloc(normals_count * sizeof(Vec3));
+    for (int i = 0; i < normals_count*3; i+=3){
+      normals[i/3] = Vec3(attrib.normals[i], attrib.normals[i+1], attrib.normals[i+2]);
+    }
+
+    cudaMemcpy(ptr_device_normals, normals, normals_count * sizeof(Vec3), cudaMemcpyHostToDevice);
+
+    free(normals);
     return ptr_device_normals;
   }
 

@@ -1,6 +1,7 @@
 #pragma once
+#include "macros.h"
 
-struct RenderConfig{
+struct ALIGN(16) RenderConfig{
   public:
   int img_width;
   int img_height;
