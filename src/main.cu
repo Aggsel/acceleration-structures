@@ -70,46 +70,6 @@ int main(int argc, char *argv[]){
       custom_normalization = atoi(parameter);
   }
 
-
-  {//TESTING
-    Vec3 v1 = Vec3(1.0, 1.0, 1.0);
-    Vec3 v2 = Vec3(2.0, 2.0, 2.0);
-    Vec3 v3 = v2 - v1;
-    assert(v1 == Vec3(1.0, 1.0, 1.0));
-    assert(v2 == Vec3(2.0, 2.0, 2.0));
-    assert(v3 == Vec3(1.0, 1.0, 1.0));
-    v3 = Vec3(2.0, 2.0, 2.0);
-    v3 = v3/2.0;
-    assert(v3 == Vec3(1.0, 1.0, 1.0));
-    v3 = Vec3(2.0, 2.0, 2.0);
-    v3 = 0.5*v3;
-    assert(v3 == Vec3(1.0, 1.0, 1.0));
-
-    v1 = Vec3(1.0, 2.0, 3.0);
-    // printf("(%f, %f, %f)", v1.x(), v1.y(), v1.z());
-    // printf("(%f, %f, %f)", v1[0], v1[1], v1[2]);
-    assert(v1 == Vec3(1.0, 2.0, 3.0));
-    assert(abs(v1.x()-1.0) <= FLT_EPSILON);
-    assert(abs(v1.y()-2.0) <= FLT_EPSILON);
-    assert(abs(v1.z()-3.0) <= FLT_EPSILON);
-    v2 = Vec3(3.0, 3.0, 3.0);
-    v3 = v2 - v1;
-    assert(v3 == Vec3(2.0, 1.0, 0.0));
-
-    float* test_ptr = (float*)(&v1.e);
-    assert(abs(test_ptr[0]-1.0) <= FLT_EPSILON);
-    assert(abs(test_ptr[1]-2.0) <= FLT_EPSILON);
-    assert(abs(test_ptr[2]-3.0) <= FLT_EPSILON);
-
-    v1 = Vec3(1.0, 1.0, 1.0);
-    v2 = Vec3(1.0, 1.0, 1.0);
-    v3 = Vec3(1.0, 1.0, 1.0);
-    Vec3 v4 = (v1+v2+v3)/3.0;
-    assert(v4 == Vec3(1.0, 1.0, 1.0));
-  }//END OF TESTING
-  
-
-
   //Try to read .obj from disk and create necessary geometry buffers on the GPU.
   ObjLoader obj(filename);
   AABB scene_bounding_box        = obj.getSceneBoundingBox();
