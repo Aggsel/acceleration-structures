@@ -214,8 +214,8 @@ void SAHBVH::splitNode(SAHBVH *bvh, Node* node, Node* nodes, int start, int end,
   const int number_of_bins = 16;
   const int primitive_count = end - start;
 
-  node->aabb           = AABB(Vec3(FLT_MAX, FLT_MAX, FLT_MAX), Vec3(-FLT_MAX, -FLT_MAX, -FLT_MAX));
-  AABB centroid_bounds = AABB(Vec3(FLT_MAX, FLT_MAX, FLT_MAX), Vec3(-FLT_MAX, -FLT_MAX, -FLT_MAX));
+  node->aabb           = AABB_CONST::inv_aabb;
+  AABB centroid_bounds = AABB_CONST::inv_aabb;
   
   for(int i = start; i < end; i++){
     node->aabb.join(triangles[triangle_ids[i]].aabb);
@@ -241,13 +241,11 @@ void SAHBVH::splitNode(SAHBVH *bvh, Node* node, Node* nodes, int start, int end,
   AABB bin_aabbs[number_of_bins];
   for (int i = 0; i < number_of_bins; i++){
     bin_triangle_counts[i] = 0;
-    bin_aabbs[i] = AABB(Vec3(FLT_MAX, FLT_MAX, FLT_MAX), Vec3(-FLT_MAX, -FLT_MAX, -FLT_MAX));
+    bin_aabbs[i] = AABB_CONST::inv_aabb;
   }
 
   //Calculate N_l, N_r, A_l & A_r for all triangles for all bins.
   for(int i = start; i < end; i++){
-    float DEBUG_CENTROID = triangles[triangle_ids[i]].centroid[axis];
-    float DEBUG_MINBOUNDS = centroid_bounds.min_bounds[axis];
     int bin_index = projectToBin( k_1, 
                                   triangles[triangle_ids[i]].centroid[axis],
                                   centroid_bounds.min_bounds[axis]);
@@ -269,7 +267,7 @@ void SAHBVH::splitNode(SAHBVH *bvh, Node* node, Node* nodes, int start, int end,
   //Sweep from right <<-- and calculate cost.
   AABB aabb_r_sweep[number_of_bins];
   for (int i = 0; i < number_of_bins - 1; i++)
-    aabb_r_sweep[i] =  AABB(Vec3(FLT_MAX, FLT_MAX, FLT_MAX), Vec3(-FLT_MAX, -FLT_MAX, -FLT_MAX));
+    aabb_r_sweep[i] =  AABB_CONST::inv_aabb;
 
   aabb_r_sweep[number_of_bins-1] = bin_aabbs[number_of_bins-1];
   float min_cost = FLT_MAX;

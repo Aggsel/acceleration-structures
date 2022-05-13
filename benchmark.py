@@ -1,5 +1,4 @@
 import subprocess, datetime, os
-from xml.etree.ElementInclude import include
 import matplotlib.pyplot as plt
 import pandas as pd
 import numpy as np
@@ -139,7 +138,7 @@ def lerp_v3(v1, v2, t):
     return x,y,z
 
 # This is really inefficient as we're rerunning the program each time.
-# It's however the easiest way atm to implement animation rendering without
+# It's however the easiest way at the moment to implement animation rendering without
 # adding support in the actual program.
 def animate(model, output_dir, bvh : BVH, r_type, origin, target, frames, spp = 1, max_depth = 1, image_size = (512, 512), output_filename="Animation", include_in_benchmark=False, custom_normalize = -1):
     os.makedirs(output_dir, exist_ok=True)
@@ -184,25 +183,16 @@ def main():
     #             "Render",
     #             BVH.LBVH,
     #             RenderType.HEATMAP,
-    #             origin=(-3,0,0),
-    #             target=(3,2,0),
+    #             origin=(-3,0,10),
+    #             target=(3,0,10),
     #             frames=50,
     #             output_filename="output",
-    #             include_in_benchmark=True)
-    animate(    "sponza.obj",
-                "Render",
-                BVH.LBVH,
-                RenderType.HEATMAP,
-                origin=(-3,0,10),
-                target=(3,0,10),
-                frames=50,
-                output_filename="output",
-                include_in_benchmark=True,
-                image_size=(512,512))
+    #             include_in_benchmark=True,
+    #             image_size=(512,512))
 
-    # scenes = ["sponza.obj"]
-    # for scene in scenes:
-    #     traversal_benchmark(scene)
+    scenes = ["sponza.obj"]
+    for scene in scenes:
+        traversal_benchmark(scene)
 
     df = pd.DataFrame(benchmark_results)
     df.columns = benchmark_results_header

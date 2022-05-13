@@ -19,6 +19,10 @@ class ALIGN(16) AABB{
     __device__ bool intersectRay(Ray ray);
 };
 
+namespace AABB_CONST{
+const AABB inv_aabb = AABB(Vec3(FLT_MAX, FLT_MAX, FLT_MAX), Vec3(-FLT_MAX, -FLT_MAX, -FLT_MAX));
+}
+
 __device__ __host__ void AABB::join(AABB otherAABB){
     this->min_bounds = min(this->min_bounds, otherAABB.min_bounds);
     this->max_bounds = max(this->max_bounds, otherAABB.max_bounds);

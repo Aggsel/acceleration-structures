@@ -8,7 +8,7 @@
 #include "third_party/cuda_helpers/helper_cuda.h"
 
 __global__ void constructLBVH(Triangle *triangles, Node* internal_nodes, Node* leaf_nodes, int primitive_count);
-__global__ void calculateAABB(Node* internal_nodes, Triangle* leaf_nodes, int leaf_count, Vec3* vert_buff);
+__global__ void calculateAABB(Node* internal_nodes, Node* leaf_nodes, int leaf_count, Vec3* vert_buff, int* counter);
 __global__ void generateMortonCodes(Triangle* triangles, int triangle_count, Vec3* ptr_device_vertex_buffer, Vec3 scene_bounds_min, Vec3 inverse_min_max);
 __device__ int2 determineRange(Triangle *sorted_morton_codes, int total_primitives, int node_index);
 __device__ int findSplit(Triangle *sorted_morton_codes, int first, int last);
@@ -236,8 +236,8 @@ class LBVH{
   Vec3* ptr_device_vertices;
   int vertex_count;
 
+  int internal_nodes_count;
   int* ptr_device_visited_node_counters;
-
   AABB scene_bounds;
 
   void populateMortonCodes(){
@@ -254,16 +254,17 @@ class LBVH{
 
     this->vertex_count = vertex_count;
     this->scene_bounds = scene_bounds;
+    this->internal_nodes_count = triangle_count - 1;
 
     // Allocate and initialize memory for:
     // BVH internal nodes, leaf nodes and our AABB bottom up traversal counter buffer.
-    checkCudaErrors(cudaMalloc(&ptr_device_internal_nodes, (triangle_count-1)*sizeof(Node)));
+    checkCudaErrors(cudaMalloc(&ptr_device_internal_nodes, internal_nodes_count*sizeof(Node)));
     checkCudaErrors(cudaMalloc(&ptr_device_leaf_nodes, (triangle_count)*sizeof(Node)));
-    checkCudaErrors(cudaMalloc(&ptr_device_visited_node_counters, (triangle_count-1)));
+    checkCudaErrors(cudaMalloc(&ptr_device_visited_node_counters, internal_nodes_count * sizeof(int)));
     //There's no calloc equivalent for cuda. https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__MEMORY.html
-    checkCudaErrors(cudaMemset(ptr_device_internal_nodes, 0, (triangle_count-1)*sizeof(Node)));
+    checkCudaErrors(cudaMemset(ptr_device_internal_nodes, 0, internal_nodes_count*sizeof(Node)));
     checkCudaErrors(cudaMemset(ptr_device_leaf_nodes, 0, (triangle_count)*sizeof(Node)));
-    checkCudaErrors(cudaMemset(ptr_device_visited_node_counters, 0, (triangle_count-1)));
+    checkCudaErrors(cudaMemset(ptr_device_visited_node_counters, 0, internal_nodes_count * sizeof(int)));
   }
 
   ~LBVH(){
@@ -285,7 +286,7 @@ class LBVH{
     thrust::sort(thrust::device, ptr_device_triangles, ptr_device_triangles+triangle_count);
 
     //3. For each internal node in the tree, calculate it's range and split/children.
-    constructLBVH<<<(triangle_count-1)/threads_per_block+1, threads_per_block>>>(ptr_device_triangles, ptr_device_internal_nodes, ptr_device_leaf_nodes, triangle_count);
+    constructLBVH<<<this->internal_nodes_count/threads_per_block+1, threads_per_block>>>(ptr_device_triangles, ptr_device_internal_nodes, ptr_device_leaf_nodes, triangle_count);
 
     //4. From each leaf node, traverse the tree towards the root of the tree.
     //   If the branch is the first to reach a given node, stop.
