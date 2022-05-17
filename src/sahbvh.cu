@@ -196,8 +196,8 @@ class SAHBVH{
 
 void SAHBVH::creationThread(SAHBVH* bvh, int thread_id){
   //TODO: There's a slight chance that one or more threads gets stuck. Timeout?
-  while(!bvh->work_queue.empty()){
-    Node* active_node = bvh->work_queue.pop_front();
+  Node* active_node;
+  while( (active_node = bvh->work_queue.pop_front()) != nullptr){
     splitNode(this,
       active_node,
       this->ptr_host_internal_nodes,

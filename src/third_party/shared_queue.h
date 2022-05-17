@@ -44,9 +44,8 @@ T& SharedQueue<T>::front(){
 template <typename T>
 T SharedQueue<T>::pop_front(){
     std::unique_lock<std::mutex> lock(mutex_);
-    while(queue_.empty()){
-      cond_.wait(lock);
-    }
+    if(queue_.empty())
+        return nullptr;
     T val = queue_.front();
     queue_.pop();
     return val;

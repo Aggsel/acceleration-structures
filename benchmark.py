@@ -20,7 +20,28 @@ benchmark_output_dir = "Benchmark Results/Renders/"
 model_dir = "sample_models"
 model = "sponza.obj"
 benchmark_results = []
-benchmark_results_header = ["BVH", "Model", "Construction Time (ms)", "Construction Time (us)", "Render Time (ms)", "Render Time (us)", "SPP", "Rays Emitted", "Traversed Nodes (total)", "Traversed Nodes (min)", "Traversed Nodes (max)", "Triangle Count"]
+benchmark_results_header = ["BVH",
+                            "Model",
+                            "Construction Time (ms)",
+                            "Construction Time (us)",
+                            "Render Time (ms)",
+                            "Render Time (us)",
+                            "SPP",
+                            "Rays Emitted",
+                            "Traversed Nodes (total)",
+                            "Traversed Nodes (min)",
+                            "Traversed Nodes (max)",
+                            "Traversed (median)",
+                            "Traversed (std)",
+                            "Triangle Count"]
+
+def save_benchmark_results():
+    if(len(benchmark_results) == 0):
+        print("Attempting save, but no benchmark results found.")
+        return
+    df = pd.DataFrame(benchmark_results)
+    df.columns = benchmark_results_header
+    df.to_csv("Benchmark_Results.tsv", sep="\t")
 
 # Benchmark decorator, allows us to run the same function multiple 
 # times, prints progress while doing so.
@@ -34,7 +55,7 @@ def benchmark(number_of_times = 1):
         return wrapper
     return inner
 
-def add_benchmark_result(bvh : BVH, model, construction_time_us, render_time_us, spp, rays_emitted, traversed_nodes, traversed_nodes_min, traversed_nodes_max, tri_count):
+def add_benchmark_result(bvh : BVH, model, construction_time_us, render_time_us, spp, rays_emitted, traversed_nodes, traversed_nodes_min, traversed_nodes_max, traversed_nodes_median, traversed_nodes_std, tri_count):
     row = [ bvh.name,
             model,
             int(construction_time_us)/1000.0,
@@ -46,6 +67,8 @@ def add_benchmark_result(bvh : BVH, model, construction_time_us, render_time_us,
             traversed_nodes,
             traversed_nodes_min,
             traversed_nodes_max,
+            traversed_nodes_median,
+            traversed_nodes_std,
             tri_count]
 
     benchmark_results.append(row)
@@ -116,6 +139,8 @@ def run_single_benchmark(   bvh = BVH.LBVH,
                             total_traversed,
                             min,
                             max,
+                            median,
+                            std,
                             triangle_count)
 
 def run_benchmark( r_type : RenderType = RenderType.NORMAL,
@@ -127,7 +152,7 @@ def run_benchmark( r_type : RenderType = RenderType.NORMAL,
     run_single_benchmark(BVH.LBVH, r_type, model_dir, model, spp, max_depth, image_size)
     run_single_benchmark(BVH.SAH, r_type, model_dir, model, spp, max_depth, image_size)
 
-@benchmark(5)
+@benchmark(10)
 def traversal_benchmark(model):
     run_benchmark(r_type = RenderType.HEATMAP, model=model)
 
@@ -190,13 +215,10 @@ def main():
     #             include_in_benchmark=True,
     #             image_size=(512,512))
 
-    scenes = ["sponza.obj"]
+    scenes = ["sponza.obj", "mcguire/vokselia_spawn_modified.obj", "mcguire/conference_room_modified.obj"]
     for scene in scenes:
         traversal_benchmark(scene)
-
-    df = pd.DataFrame(benchmark_results)
-    df.columns = benchmark_results_header
-    df.to_csv("Benchmark_Results.tsv", sep="\t")
+        save_benchmark_results()
 
 if __name__ == "__main__":
     main()

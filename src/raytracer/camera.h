@@ -12,6 +12,7 @@ struct ALIGN(16) Camera{
     Vec3 horizontal;
     Vec3 vertical;
     Vec3 lower_left_corner;
+    Vec3 world_dir;
 
     __device__ __host__  Camera::Camera(int image_width, int image_height, float vertical_fov, float focal_length, Vec3 origin){
       this->vertical_fov = vertical_fov;
