@@ -10,6 +10,7 @@ struct ALIGN(16) Node{
   bool is_leaf;
 
   AABB aabb;
+  AABB centroid_aabb;
   int start_range;
   int range;
   int left_child_i;

@@ -15,7 +15,7 @@ class RenderType(Enum):
     NORMAL = 1
     HEATMAP = 2
 
-executable_path = "build/main.exe"
+executable_path = "..build/main.exe"
 benchmark_output_dir = "Benchmark Results/Renders/"
 model_dir = "sample_models"
 model = "sponza.obj"
@@ -33,7 +33,8 @@ benchmark_results_header = ["BVH",
                             "Traversed Nodes (max)",
                             "Traversed (median)",
                             "Traversed (std)",
-                            "Triangle Count"]
+                            "Triangle Count",
+                            "Comment"]
 
 def save_benchmark_results():
     if(len(benchmark_results) == 0):
@@ -55,7 +56,19 @@ def benchmark(number_of_times = 1):
         return wrapper
     return inner
 
-def add_benchmark_result(bvh : BVH, model, construction_time_us, render_time_us, spp, rays_emitted, traversed_nodes, traversed_nodes_min, traversed_nodes_max, traversed_nodes_median, traversed_nodes_std, tri_count):
+def add_benchmark_result(bvh : BVH,
+                            model, 
+                            construction_time_us, 
+                            render_time_us, 
+                            spp, 
+                            rays_emitted, 
+                            traversed_nodes, 
+                            traversed_nodes_min, 
+                            traversed_nodes_max, 
+                            traversed_nodes_median, 
+                            traversed_nodes_std, 
+                            tri_count,
+                            comment = ""):
     row = [ bvh.name,
             model,
             int(construction_time_us)/1000.0,
@@ -69,7 +82,8 @@ def add_benchmark_result(bvh : BVH, model, construction_time_us, render_time_us,
             traversed_nodes_max,
             traversed_nodes_median,
             traversed_nodes_std,
-            tri_count]
+            tri_count,
+            comment]
 
     benchmark_results.append(row)
 
@@ -83,7 +97,8 @@ def run_single_benchmark(   bvh = BVH.LBVH,
                             filename = "",
                             include_in_benchmark = True,
                             pos = (0,0,0),
-                            custom_normalize = -1):
+                            custom_normalize = -1,
+                            comment=""):
     timestamp = datetime.datetime.now()
     if(filename == ""):
         filename = f"{benchmark_output_dir}Output-{bvh.name}-{r_type.name} {timestamp.strftime('%Y-%m-%d %H%M%S')}.ppm"
@@ -141,7 +156,10 @@ def run_single_benchmark(   bvh = BVH.LBVH,
                             max,
                             median,
                             std,
-                            triangle_count)
+                            triangle_count,
+                            comment)
+    
+    save_benchmark_results()
 
 def run_benchmark( r_type : RenderType = RenderType.NORMAL,
                     model_dir = model_dir,
@@ -165,7 +183,21 @@ def lerp_v3(v1, v2, t):
 # This is really inefficient as we're rerunning the program each time.
 # It's however the easiest way at the moment to implement animation rendering without
 # adding support in the actual program.
-def animate(model, output_dir, bvh : BVH, r_type, origin, target, frames, spp = 1, max_depth = 1, image_size = (512, 512), output_filename="Animation", include_in_benchmark=False, custom_normalize = -1):
+def animate(model, 
+            output_dir, 
+            bvh : BVH, 
+            r_type, 
+            origin, 
+            target, 
+            frames, 
+            spp = 1, 
+            max_depth = 1, 
+            image_size = (512, 512), 
+            output_filename="Animation", 
+            include_in_benchmark=False, 
+            custom_normalize = -1, 
+            comment=""):
+
     os.makedirs(output_dir, exist_ok=True)
 
     joined_benchmarks = []
@@ -175,7 +207,7 @@ def animate(model, output_dir, bvh : BVH, r_type, origin, target, frames, spp = 
         pos = lerp_v3(origin, target, t)
 
         filename = f"{output_dir}/animation-{frame:04d}.ppm"
-        run_single_benchmark(bvh, r_type, model_dir, model, spp, max_depth, image_size, filename, include_in_benchmark, pos = pos, custom_normalize=custom_normalize)
+        run_single_benchmark(bvh, r_type, model_dir, model, spp, max_depth, image_size, filename, include_in_benchmark, pos = pos, custom_normalize=custom_normalize, comment=comment)
         if(not include_in_benchmark):
             continue
 
@@ -186,7 +218,7 @@ def animate(model, output_dir, bvh : BVH, r_type, origin, target, frames, spp = 
         joined_benchmarks.append(lines_int)
     
     joined_benchmarks = np.array(joined_benchmarks)
-    # TODO: Log these results in someway.
+    # TODO: Log the total results as well.
     print(f"\nSum:{np.sum(joined_benchmarks)}\nMin:{np.min(joined_benchmarks)}\nMax:{np.max(joined_benchmarks)}\nAvg:{np.average(joined_benchmarks)}\nStd:{np.std(joined_benchmarks)}\n")
 
     return_code = subprocess.call([
@@ -204,21 +236,22 @@ def animate(model, output_dir, bvh : BVH, r_type, origin, target, frames, spp = 
 def main():
     os.makedirs(benchmark_output_dir, exist_ok=True)
     
-    # animate(    "sponza.obj",
-    #             "Render",
-    #             BVH.LBVH,
-    #             RenderType.HEATMAP,
-    #             origin=(-3,0,10),
-    #             target=(3,0,10),
-    #             frames=50,
-    #             output_filename="output",
-    #             include_in_benchmark=True,
-    #             image_size=(512,512))
+    animate(    "sponza.obj",
+                "Render",
+                BVH.LBVH,
+                RenderType.HEATMAP,
+                origin=(-3,0,10),
+                target=(3,0,10),
+                frames=10,
+                output_filename="output",
+                include_in_benchmark=True,
+                image_size=(512,512),
+                comment="Animation")
 
-    scenes = ["sponza.obj", "mcguire/vokselia_spawn_modified.obj", "mcguire/conference_room_modified.obj"]
-    for scene in scenes:
-        traversal_benchmark(scene)
-        save_benchmark_results()
+    # scenes = ["sponza.obj", "mcguire/vokselia_spawn_modified.obj", "mcguire/conference_room_modified.obj"]
+    # for scene in scenes:
+    #     traversal_benchmark(scene)
+    #     save_benchmark_results()
 
 if __name__ == "__main__":
     main()
