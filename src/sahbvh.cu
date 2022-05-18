@@ -5,11 +5,15 @@
 #include <atomic>
 #include <thread>
 #include <vector>
+#include <queue>
 #include "vec3.h"
 #include "triangle.h"
 #include "node.h"
 #include "debug.cu"
 #include "third_party/cuda_helpers/helper_cuda.h"
+
+#define num_threads 8
+#define num_bins 16
 
 __global__ void computeBoundsAndCentroids(Triangle* triangles, int triangle_count, Vec3* ptr_device_vertex_buffer, int* ptr_device_triangle_ids);
 
@@ -91,16 +95,13 @@ class SAHBVH{
   SharedQueue<Node*> work_queue;
   std::vector<std::thread> workers;
 
-  const int num_bins = 16;
-  const int num_threads = 8;
-
   //Bins used during horizontal parallellization 
-  int bin_triangle_counts[16*8];  //TODO: Bad solution, there are a number of places in this
-  AABB bin_aabbs[16*8];           //      file where num_bins and num_threads are magic numbers.
-  int tri_count_l_sweep[16*8];
-  AABB aabb_l_sweep[16*8];
-  int tri_count_r_sweep[16*8];
-  AABB aabb_r_sweep[16*8];
+  int bin_triangle_counts[num_bins*num_threads];  //TODO: Bad solution, there are a number of places in this
+  AABB bin_aabbs[num_bins*num_threads];           //      file where num_bins and num_threads are magic numbers.
+  int tri_count_l_sweep[num_bins*num_threads];
+  AABB aabb_l_sweep[num_bins*num_threads];
+  int tri_count_r_sweep[num_bins*num_threads];
+  AABB aabb_r_sweep[num_bins*num_threads];
 
   public:
   SAHBVH(Triangle* ptr_device_triangles, int triangle_count, Vec3* ptr_device_vertices, int vertex_count, AABB scene_bounds_triangles){
@@ -140,11 +141,9 @@ class SAHBVH{
   }
 
   void splitNode(SAHBVH *bvh, Node* node, Node* nodes, int start, int end, int* triangle_ids, 
-                  int* temp_triangle_ids, Triangle* triangles, int depth);
+                  int* temp_triangle_ids, Triangle* triangles, int depth, std::queue<Node*> *queue);
   void creationThread(SAHBVH* bvh, int thread_id);
-  void horizontalThread(SAHBVH* bvh, int thread_id);
-  void splitHorizontal(SAHBVH *bvh, Node* node, int start, int end, int* triangle_ids, 
-                        Triangle* triangles, int thread_id, float k_1, int axis, AABB node_centroid_bounds);
+
   void horizontalParallelization();
 
   //Returns device ptr to root of tree.
@@ -225,7 +224,6 @@ void SAHBVH::horizontalParallelization(){
   int start = current_node->start_range;
   int end = start + current_node->range;
   const int primitive_count = end - start;
-  const int num_bins = 16;
   current_node->aabb   = AABB_CONST::inv_aabb;
   AABB centroid_bounds = AABB_CONST::inv_aabb;
   //TODO: Could this be parallelized?
@@ -249,15 +247,15 @@ void SAHBVH::horizontalParallelization(){
 
   //Continue sweeping in parallell
   //Allocate bins for each thread
-  this->bin_triangle_counts[num_bins*num_threads];
-  this->bin_aabbs[num_bins*num_threads];
   for (int thread_id = 0; thread_id < num_threads; thread_id++){
-    int thread_range = (end - start) / num_threads;
-    int thread_start = start + thread_range * thread_id;
-    int thread_end = start + thread_range * thread_id - 1;  //BUG: We'll miss some triangles in the end by doing this. 
-                                                            //     Make sure last thread takes the rest of the range.
-    workers.push_back(std::thread([this, thread_id, current_node, thread_start, thread_end, k_1, axis, centroid_bounds, size, primitive_count, num_bins] {
+    workers.push_back(std::thread([this, thread_id, current_node, start, end, k_1, axis, centroid_bounds, size, primitive_count] {
       int first_bin_index = thread_id*num_bins;
+
+      int thread_range = (end - start) / num_threads;
+      int thread_start = start + thread_range * thread_id;
+      int thread_end = thread_start + thread_range;
+      if(thread_id == num_threads-1)
+        thread_end = end;
 
       for (int i = 0; i < num_bins; i++){
         //TODO: Not sure if we need to reset these bins.
@@ -289,7 +287,6 @@ void SAHBVH::horizontalParallelization(){
       //Sweep from right <<-- Do not calculate cost yet.
       int last_bin_index = first_bin_index+num_bins-1;
       aabb_r_sweep[last_bin_index] = bin_aabbs[last_bin_index];
-      float min_cost = FLT_MAX;
 
       for (int i = last_bin_index-1; i >= 0; i--){
         this->tri_count_r_sweep[i] = primitive_count - tri_count_l_sweep[i];
@@ -303,53 +300,55 @@ void SAHBVH::horizontalParallelization(){
     }
   }
 
-
   //Sweep left
-  AABB aabb_l_sweep[num_bins];
-  int tri_count_l_sweep[num_bins];
-  //Calculate first bin values.
-  for (int i = 0; i < num_threads; i++){
-    tri_count_l_sweep[0] = this->bin_triangle_counts[num_bins * i];
-    aabb_l_sweep[0] = bin_aabbs[num_bins * i];
+  AABB local_aabb_l_sweep[num_bins];
+  int local_tri_count_l_sweep[num_bins];
+  for (int i = 0; i < num_bins; i++){
+    local_tri_count_l_sweep[i] = 0;
+    local_aabb_l_sweep[i] = AABB_CONST::inv_aabb;
   }
+
+  //Calculate leftmost bin primitive count and aabb.
+  for (int i = 0; i < num_threads; i++){
+    local_tri_count_l_sweep[0] = this->bin_triangle_counts[num_bins * i];
+    local_aabb_l_sweep[0] = bin_aabbs[num_bins * i];
+  }
+
   //Sweep left, aggregating all thread bins into one bin.
   for (int i = 1; i < num_bins; i++){
     int current_bin_counts = 0;
     for (int x = 0; x < num_threads; x++)
-      current_bin_counts += this->bin_triangle_counts[num_bins * x];
-    tri_count_l_sweep[i] = tri_count_l_sweep[i-1] + current_bin_counts;
+      current_bin_counts += this->bin_triangle_counts[num_bins * x + i];
+    local_tri_count_l_sweep[i] = local_tri_count_l_sweep[i-1] + current_bin_counts;
     
     AABB current_bin_aabb = AABB_CONST::inv_aabb;
     for (int x = 0; x < num_threads; x++)
-      current_bin_aabb.join(this->bin_aabbs[num_bins * x]);
-    aabb_l_sweep[i] = AABB::join(aabb_l_sweep[i-1], current_bin_aabb);
+      current_bin_aabb.join(this->bin_aabbs[num_bins * x + i]);
+    local_aabb_l_sweep[i] = AABB::join(local_aabb_l_sweep[i-1], current_bin_aabb);
   }
 
   //Sweep right and calculate cost
-  AABB aabb_r_sweep[num_bins];
-  int tri_count_r_sweep[num_bins];
-  //Calculate last bin values.
-  for (int i = 0; i < num_threads; i++){
-    tri_count_r_sweep[num_bins-1] = this->bin_triangle_counts[num_bins * i + (num_bins - 1)];
-    aabb_r_sweep[num_bins-1] = bin_aabbs[num_bins * i + (num_bins - 1)];
-  }
+  AABB local_aabb_r_sweep[num_bins];
+  //Initialize rightmost bin values.
+  for (int i = 0; i < num_threads; i++)
+    local_aabb_r_sweep[num_bins-1] = bin_aabbs[num_bins * i + (num_bins - 1)];
+  
   float min_cost = FLT_MAX;
   int split_index = 0;
   float bin_width = size[axis] / num_bins;
-  float split_position = centroid_bounds.min_bounds[axis] + (bin_width*split_index);
 
   for (int i = num_bins-2; i >= 0; i--){
-    int primitives_left_side = tri_count_l_sweep[i];
+    int primitives_left_side = local_tri_count_l_sweep[i];
 
     AABB current_bin_aabb = AABB_CONST::inv_aabb;
     for (int x = 0; x < num_threads; x++)
-      current_bin_aabb.join(this->bin_triangle_counts[num_bins * i + (num_bins - 1)]);
+      current_bin_aabb.join( this->bin_aabbs[num_bins * i + (num_bins - 1)] );
 
-    aabb_r_sweep[i] = AABB::join(aabb_r_sweep[i+1], current_bin_aabb);
+    local_aabb_r_sweep[i] = AABB::join(local_aabb_r_sweep[i+1], current_bin_aabb);
     float sah_cost = cost(  primitives_left_side,                     //N_L
                             primitive_count - primitives_left_side,   //N_R
-                            aabb_l_sweep[i].surfaceArea(),            //A_L
-                            aabb_r_sweep[i].surfaceArea());           //A_R
+                            local_aabb_l_sweep[i].surfaceArea(),      //A_L
+                            local_aabb_r_sweep[i].surfaceArea());     //A_R
 
     if(sah_cost < min_cost){
       min_cost = sah_cost;
@@ -360,6 +359,7 @@ void SAHBVH::horizontalParallelization(){
   for (int i = start; i < end; i++)
     temp_triangle_ids[i] = triangle_ids[i];
 
+  float split_position = centroid_bounds.min_bounds[axis] + (bin_width*split_index);
   //Update triangle id buffers.
   int left_i = start;
   int right_i = end-1;
@@ -404,23 +404,31 @@ void SAHBVH::horizontalParallelization(){
 
 // ----- VERTICAL PARALLELIZATION -----
 void SAHBVH::creationThread(SAHBVH* bvh, int thread_id){
-  //TODO: There's a slight chance that one or more threads gets stuck. Timeout?
   Node* active_node;
+  std::queue<Node*> local_queue;
   while( (active_node = bvh->work_queue.pop_front()) != nullptr){
-    splitNode(this,
-      active_node,
-      this->ptr_host_internal_nodes,
-      active_node->start_range,
-      active_node->start_range + active_node->range,
-      this->triangle_ids,
-      this->temp_triangle_ids,
-      this->triangles,
-      0);
+    while(true){
+      splitNode(this,
+        active_node,
+        this->ptr_host_internal_nodes,
+        active_node->start_range,
+        active_node->start_range + active_node->range,
+        this->triangle_ids,
+        this->temp_triangle_ids,
+        this->triangles,
+        0,
+        &local_queue);
+        
+        if(local_queue.size() == 0)
+          break;
+
+        active_node = local_queue.front();
+        local_queue.pop();
+    }
   }
 }
 
-void SAHBVH::splitNode(SAHBVH *bvh, Node* node, Node* nodes, int start, int end, int* triangle_ids, int* temp_triangle_ids, Triangle* triangles, int depth){
-  const int num_bins = 16;
+void SAHBVH::splitNode(SAHBVH *bvh, Node* node, Node* nodes, int start, int end, int* triangle_ids, int* temp_triangle_ids, Triangle* triangles, int depth, std::queue<Node*> *queue){
   const int primitive_count = end - start;
 
   node->aabb           = AABB_CONST::inv_aabb;
@@ -537,7 +545,7 @@ void SAHBVH::splitNode(SAHBVH *bvh, Node* node, Node* nodes, int start, int end,
   left_child->depth = node->depth + 1;
   left_child->is_leaf = true;
   node->left_child_i = left_child - nodes;
-  work_queue.push(left_child);
+  queue->push(left_child);
 
   node_index = ++nodes_created;
   Node* right_child = &nodes[node_index];
@@ -546,5 +554,5 @@ void SAHBVH::splitNode(SAHBVH *bvh, Node* node, Node* nodes, int start, int end,
   right_child->is_leaf = true;
   right_child->depth = node->depth + 1;
   node->right_child_i = right_child - nodes;
-  work_queue.push(right_child);
+  queue->push(right_child);
 }
