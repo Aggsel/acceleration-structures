@@ -11,7 +11,7 @@ Built on windows using:
 Although will likely still work on older versions. Requires an Nvidia GPU.
 
 ```bash
-    nvcc src/main.cu -o build/main
+    nvcc src/main.cu -Xcompiler "/O2" -o build/main
 ```
 
 Include debugging symbols by passing the `Zi` flag to MSVC via the NVCC `-Xcomplier` argument (obviously only applicable on windows when compiling using MSVC):

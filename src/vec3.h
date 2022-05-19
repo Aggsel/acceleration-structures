@@ -7,41 +7,41 @@
 class Vec3{
   public:
     float e[4];
-    __device__ __host__ Vec3();
-    __device__ __host__ Vec3(float e0, float e1, float e2);
-    __device__ __host__ Vec3(float e0);
-    __device__ __host__ Vec3(Vec2 v2, float e2);
-    __device__ __host__ float x();
-    __device__ __host__ float y();
-    __device__ __host__ float z();
-    __device__ __host__ inline float Vec3::operator[] (int i) const;
-    __device__ __host__ inline float& Vec3::operator[] (int i);
+    __device__ Vec3();
+    __device__ Vec3(float e0, float e1, float e2);
+    __device__ Vec3(float e0);
+    __device__ Vec3(Vec2 v2, float e2);
+    __device__ float x();
+    __device__ float y();
+    __device__ float z();
+    __device__ inline float Vec3::operator[] (int i) const;
+    __device__ inline float& Vec3::operator[] (int i);
 };
 
-__device__ __host__ Vec3::Vec3(){ e[0] = 0.0f; e[1] = 0.0f; e[2] = 0.0f; e[3] = 0.0f; }
-__device__ __host__ Vec3::Vec3(float e0, float e1, float e2) { e[0] = e0; e[1] = e1; e[2] = e2; e[3] = 0.0f; }
-__device__ __host__ Vec3::Vec3(float e0) { e[0] = e0; e[1] = e0; e[2] = e0; e[3] = 0.0f; }
-__device__ __host__ Vec3::Vec3(Vec2 v2, float e2) { e[0] = v2.x(); e[1] = v2.y(); e[2] = e2; e[3] = 0.0f; }
+__device__ Vec3::Vec3(){ e[0] = 0.0f; e[1] = 0.0f; e[2] = 0.0f; e[3] = 0.0f; }
+__device__ Vec3::Vec3(float e0, float e1, float e2) { e[0] = e0; e[1] = e1; e[2] = e2; e[3] = 0.0f; }
+__device__ Vec3::Vec3(float e0) { e[0] = e0; e[1] = e0; e[2] = e0; e[3] = 0.0f; }
+__device__ Vec3::Vec3(Vec2 v2, float e2) { e[0] = v2.x(); e[1] = v2.y(); e[2] = e2; e[3] = 0.0f; }
 
-__device__ __host__ inline float Vec3::operator[] (int i) const { return e[i]; };
-__device__ __host__ inline float& Vec3::operator[] (int i) { return e[i]; };
+__device__ inline float Vec3::operator[] (int i) const { return e[i]; };
+__device__ inline float& Vec3::operator[] (int i) { return e[i]; };
 
-__device__ __host__ float Vec3::x() { return e[0]; }
-__device__ __host__ float Vec3::y() { return e[1]; }
-__device__ __host__ float Vec3::z() { return e[2]; }
+__device__ float Vec3::x() { return e[0]; }
+__device__ float Vec3::y() { return e[1]; }
+__device__ float Vec3::z() { return e[2]; }
 
-__device__ __host__ Vec3 operator+(Vec3 lhs, Vec3 rhs){
+__device__ Vec3 operator+(Vec3 lhs, Vec3 rhs){
   return Vec3(lhs.x()+rhs.x(), lhs.y()+rhs.y(), lhs.z()+rhs.z());
 }
-__device__ __host__ Vec3 operator-(Vec3 lhs, Vec3 rhs){
+__device__ Vec3 operator-(Vec3 lhs, Vec3 rhs){
   return Vec3(lhs.x()-rhs.x(), lhs.y()-rhs.y(), lhs.z()-rhs.z());
 }
-__device__ __host__ Vec3 min(Vec3 v1, Vec3 v2){
+__device__ Vec3 min(Vec3 v1, Vec3 v2){
   return Vec3(  min(v1.x(), v2.x()),
                 min(v1.y(), v2.y()),
                 min(v1.z(), v2.z()) );
 }
-__device__ __host__ Vec3 max(Vec3 v1, Vec3 v2){
+__device__ Vec3 max(Vec3 v1, Vec3 v2){
   return Vec3(  max(v1.x(), v2.x()),
                 max(v1.y(), v2.y()),
                 max(v1.z(), v2.z()) );
@@ -92,8 +92,6 @@ __device__ __host__ float magnitude(Vec3 a);
 __device__ __host__ float sqrMagnitude(Vec3 a);
 __device__ __host__ Vec3 cross(Vec3 a, Vec3 b);
 __device__ __host__ Vec3 normalize(Vec3 v);
-__device__ __host__ Vec3 min(Vec3 v1, Vec3 v2);
-__device__ __host__ Vec3 max(Vec3 v1, Vec3 v2);
 __device__ __host__ Vec3 lerp(Vec3 v1, Vec3 v2, float t);
 
 __device__ __host__ Vec3 operator*(float lhs, Vec3 rhs){
