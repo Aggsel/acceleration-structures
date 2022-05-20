@@ -15,12 +15,33 @@ class ALIGN(16) AABB{
     __device__ __host__ void join(AABB otherAABB);
     __device__ __host__ void join(Vec3 vec);
     __device__ __host__ float surfaceArea();
+    __device__ __host__ AABB extend();
     __device__ __host__ static AABB join(AABB aabb_1, AABB aabb_2);
     __device__ bool intersectRay(Ray ray);
 };
 
 namespace AABB_CONST{
 const AABB inv_aabb = AABB(Vec3(FLT_MAX, FLT_MAX, FLT_MAX), Vec3(-FLT_MAX, -FLT_MAX, -FLT_MAX));
+}
+
+//TODO: Rewrite this to use SSE instructions.
+__device__ __host__ AABB AABB::extend(){
+    AABB extended = *this;
+    float scale[3];
+    Vec3 scene_scale;
+    float eps = 0.0001;
+    for (int i = 0; i < 3; i++) {
+        scale[i] = this->max_bounds[i] - this->min_bounds[i];
+        if (scale[i] < eps) {
+            scene_scale[i] = eps;
+        } else {
+            scene_scale[i] = eps * scale[i];
+        }
+    }
+    extended.min_bounds = extended.min_bounds - scene_scale;
+    extended.max_bounds = extended.max_bounds + scene_scale;
+
+    return extended;
 }
 
 __device__ __host__ void AABB::join(AABB otherAABB){
