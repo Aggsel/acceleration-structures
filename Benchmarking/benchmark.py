@@ -1,4 +1,5 @@
 import subprocess, datetime, os
+from cv2 import normalize
 import matplotlib.pyplot as plt
 import pandas as pd
 import numpy as np
@@ -15,7 +16,7 @@ class RenderType(Enum):
     NORMAL = 1
     HEATMAP = 2
 
-executable_path = "..build/main.exe"
+executable_path = "build/main.exe"
 benchmark_output_dir = "Benchmark Results/Renders/"
 model_dir = "sample_models"
 model = "sponza.obj"
@@ -36,7 +37,7 @@ benchmark_results_header = ["BVH",
                             "Triangle Count",
                             "Comment"]
 
-def save_benchmark_results():
+def save_benchmark_results(name = "Benchmark_Results.tsv"):
     if(len(benchmark_results) == 0):
         print("Attempting save, but no benchmark results found.")
         return
@@ -194,7 +195,7 @@ def animate(model,
             max_depth = 1, 
             image_size = (512, 512), 
             output_filename="Animation", 
-            include_in_benchmark=False, 
+            include_in_benchmark=True, 
             custom_normalize = -1, 
             comment=""):
 
@@ -236,17 +237,61 @@ def animate(model,
 def main():
     os.makedirs(benchmark_output_dir, exist_ok=True)
     
-    animate(    "sponza.obj",
-                "Render",
+    animate(    "mcguire/vokselia_spawn.obj",
+                "Render/vokselia_spawn/Heatmap/LBVH",
                 BVH.LBVH,
                 RenderType.HEATMAP,
-                origin=(-3,0,10),
-                target=(3,0,10),
-                frames=10,
-                output_filename="output",
-                include_in_benchmark=True,
-                image_size=(512,512),
+                origin=(0.01,0.3,1),
+                target=(0.01,0.3,-0.5),
+                frames=100,
+                output_filename="vokselia_spawn_LBVH",
+                custom_normalize=1024,
                 comment="Animation")
+
+    animate(    "mcguire/vokselia_spawn.obj",
+                "Render/vokselia_spawn/Heatmap/SAH",
+                BVH.SAH,
+                RenderType.HEATMAP,
+                origin=(0.01,0.3,1),
+                target=(0.01,0.3,-0.5),
+                frames=100,
+                output_filename="vokselia_spawn_SAH",
+                custom_normalize=1024,
+                comment="Animation")
+
+    animate(    "mcguire/san_miguel.obj",
+                "Render/san_miguel/Heatmap/LBVH",
+                BVH.LBVH,
+                RenderType.HEATMAP,
+                origin=(4.5, 0, 6),
+                target=(4.5, 0, 2),
+                frames=100,
+                output_filename="san_miguel_LBVH",
+                comment="Animation",
+                custom_normalize=3447)
+
+    animate(    "mcguire/san_miguel.obj",
+                "Render/san_miguel/Heatmap/SAH",
+                BVH.SAH,
+                RenderType.HEATMAP,
+                origin=(4.5, 0, 6),
+                target=(4.5, 0, 2),
+                frames=100,
+                output_filename="san_miguel_SAH",
+                comment="Animation",
+                custom_normalize=3447)
+
+    # animate(    "sponza.obj",
+    #             "Render",
+    #             BVH.LBVH,
+    #             RenderType.HEATMAP,
+    #             origin=(-3,0,10),
+    #             target=(3,0,10),
+    #             frames=10,
+    #             output_filename="output",
+    #             include_in_benchmark=True,
+    #             image_size=(512,512),
+    #             comment="Animation")
 
     # scenes = ["sponza.obj", "mcguire/vokselia_spawn_modified.obj", "mcguire/conference_room_modified.obj"]
     # for scene in scenes:

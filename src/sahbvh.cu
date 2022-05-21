@@ -181,7 +181,7 @@ class SAHBVH{
     workers.clear();
 
     //Vertical parallelization
-    for (int i = 0; i < num_threads; i++){
+    for (int i = 0; i <= num_threads; i++){
       workers.push_back(std::thread([this, i] {
         this->t_vertical(this, i);
       }));
@@ -205,7 +205,7 @@ class SAHBVH{
     
     //This could be omitted if the tracing traversal is modified to be compliant with our CPU tree structure.
     //As of right now we're using the same traversal algorithm for both lbvh and binned sah bvh, but the structure is slightly different. 
-    //We must therefore first copy the data to the GPU and then update all pointers in the tree to be device, not host.
+    //We must therefore first copy the data to the GPU and then update all pointers in the tree to be device.
     deepCopyTreeToGPU<<<1,1>>>(ptr_device_temp_nodes,
       nodes_created.load(),
       ptr_device_internal_nodes,
@@ -556,7 +556,6 @@ void SAHBVH::splitVertical(SAHBVH *bvh,
   left_child->depth = node->depth + 1;
   left_child->is_leaf = true;
   left_child->centroid_aabb = aabb_l_sweep[split_index].extend();
-  left_child->node_left_right = 1;
   node->left_child_i = left_child - nodes;
   queue->push(left_child);
 
@@ -567,7 +566,6 @@ void SAHBVH::splitVertical(SAHBVH *bvh,
   right_child->is_leaf = true;
   right_child->centroid_aabb = aabb_r_sweep[split_index].extend();
   right_child->depth = node->depth + 1;
-  right_child->node_left_right = 2;
   node->right_child_i = right_child - nodes;
   queue->push(right_child);
 }

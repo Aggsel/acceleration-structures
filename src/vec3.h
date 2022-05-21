@@ -82,7 +82,8 @@ __host__ Vec3 max(Vec3 lhs, Vec3 rhs){ lhs.e = _mm_max_ps(lhs.e, rhs.e); return 
 #endif
 
 // HOST AND DEVICE COMMON IMPLEMENTATION
-// (implementation must be data type agnostic)
+// (These implementations must be data type agnostic, 
+//  i.e. do not operate directly on the member array/__m128)
 __device__ __host__ Vec3 operator*(float lhs, Vec3 rhs);
 __device__ __host__ Vec3 operator/(Vec3 lhs, float rhs);
 __device__ __host__ bool operator==(Vec3 lhs, Vec3 rhs);

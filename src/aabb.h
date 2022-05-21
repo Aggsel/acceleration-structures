@@ -63,7 +63,7 @@ __device__ __host__ AABB AABB::join(AABB aabb_1, AABB aabb_2){
 
 __device__ __host__ float AABB::surfaceArea(){
     Vec3 size = this->max_bounds - this->min_bounds;
-    return max( (size.x() * size.y() + size.x() * size.z() + size.y() * size.z()) * 0.01, 0.0);
+    return (size.x() * size.y() + size.x() * size.z() + size.y() * size.z()) * 0.01;
 }
 
 //https://gamedev.stackexchange.com/questions/18436/most-efficient-aabb-vs-ray-collision-algorithms
