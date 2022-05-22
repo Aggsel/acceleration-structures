@@ -237,61 +237,99 @@ def animate(model,
 def main():
     os.makedirs(benchmark_output_dir, exist_ok=True)
     
-    animate(    "mcguire/vokselia_spawn.obj",
-                "Render/vokselia_spawn/Heatmap/LBVH",
-                BVH.LBVH,
-                RenderType.HEATMAP,
-                origin=(0.01,0.3,1),
-                target=(0.01,0.3,-0.5),
-                frames=100,
-                output_filename="vokselia_spawn_LBVH",
-                custom_normalize=1024,
-                comment="Animation")
+    frames = 100
 
-    animate(    "mcguire/vokselia_spawn.obj",
-                "Render/vokselia_spawn/Heatmap/SAH",
-                BVH.SAH,
-                RenderType.HEATMAP,
-                origin=(0.01,0.3,1),
-                target=(0.01,0.3,-0.5),
-                frames=100,
-                output_filename="vokselia_spawn_SAH",
-                custom_normalize=1024,
-                comment="Animation")
+    configurations = {
+        "salle_de_bain" : {
+            "model" : "mcguire/salle_de_bain.obj",
+            "output_dir" : "Render/salle_de_bain/Heatmap",
+            "render_type" : RenderType.HEATMAP,
+            "origin" : (0, 8, 20),
+            "target" : (0, 8, 0),
+            "frames" : frames,
+            "output_filename" : "salle_de_bain",
+            "custom_normalize" : 931,
+            "comment" : "Animation"
+        },
+        "dragon" : {
+            "model" : "mcguire/dragon.obj",
+            "output_dir" : "Render/dragon/Heatmap",
+            "render_type" : RenderType.HEATMAP,
+            "origin" : (0, 0, 1),
+            "target" : (0, 0, 0.4),
+            "frames" : frames,
+            "output_filename" : "dragon",
+            "custom_normalize" : 417,
+            "comment" : "Animation"
+        },
+        "sibenik" : {
+            "model" : "mcguire/sibenik.obj",
+            "output_dir" : "Render/sibenik/Heatmap",
+            "render_type" : RenderType.HEATMAP,
+            "origin" : (0, -10, 6),
+            "target" : (0, -10, -1),
+            "frames" : frames,
+            "output_filename" : "sibenik",
+            "custom_normalize" : 283,
+            "comment" : "Animation"
+        },
+        "sponza" : {
+            "model" : "mcguire/sponza.obj",
+            "output_dir" : "Render/mcguire/Heatmap",
+            "render_type" : RenderType.HEATMAP,
+            "origin" : (0, 1.5, 4),
+            "target" : (0, 1.5, 0),
+            "frames" : frames,
+            "output_filename" : "sponza",
+            "custom_normalize" : 495,
+            "comment" : "Animation"
+        },
+        "vokselia_spawn" : {
+            "model" : "mcguire/vokselia_spawn.obj",
+            "output_dir" : "Render/vokselia_spawn/Heatmap",
+            "render_type" : RenderType.HEATMAP,
+            "origin" : (0.01,0.3,1),
+            "target" : (0.01,0.3,-0.5),
+            "frames" : frames,
+            "output_filename" : "vokselia_spawn",
+            "custom_normalize" : 1024,
+            "comment" : "Animation"
+        },
+        "san_miguel" : {
+            "model" : "mcguire/san_miguel.obj",
+            "output_dir" : "Render/san_miguel/Heatmap",
+            "render_type" : RenderType.HEATMAP,
+            "origin" : (4.5, 0, 6),
+            "target" : (4.5, 0, 2),
+            "frames" : frames,
+            "output_filename" : "san_miguel",
+            "custom_normalize" : 3447,
+            "comment" : "Animation"
+        }
+    }
 
-    animate(    "mcguire/san_miguel.obj",
-                "Render/san_miguel/Heatmap/LBVH",
-                BVH.LBVH,
-                RenderType.HEATMAP,
-                origin=(4.5, 0, 6),
-                target=(4.5, 0, 2),
-                frames=100,
-                output_filename="san_miguel_LBVH",
-                comment="Animation",
-                custom_normalize=3447)
+    for benchmark_name, config in configurations.items():
+        animate(    config["model"],
+                    f"{config['output_dir']}/LBVH",
+                    BVH.LBVH,
+                    r_type = config["render_type"],
+                    origin = config["origin"],
+                    target = config["target"],
+                    frames = config["frames"],
+                    output_filename=f"{config['output_filename']}-LBVH",
+                    custom_normalize=config["custom_normalize"],
+                    comment=config["comment"])
+        animate(    config["model"],
+                    f"{config['output_dir']}/SAH",
+                    BVH.SAH,
+                    r_type = config["render_type"],
+                    origin = config["origin"],
+                    target = config["target"],
+                    frames = config["frames"],
+                    output_filename=f"{config['output_filename']}-SAH",
+                    custom_normalize=config["custom_normalize"],
+                    comment=config["comment"])
 
-    animate(    "mcguire/san_miguel.obj",
-                "Render/san_miguel/Heatmap/SAH",
-                BVH.SAH,
-                RenderType.HEATMAP,
-                origin=(4.5, 0, 6),
-                target=(4.5, 0, 2),
-                frames=100,
-                output_filename="san_miguel_SAH",
-                comment="Animation",
-                custom_normalize=3447)
-
-    # animate(    "sponza.obj",
-    #             "Render",
-    #             BVH.LBVH,
-    #             RenderType.HEATMAP,
-    #             origin=(-3,0,10),
-    #             target=(3,0,10),
-    #             frames=10,
-    #             output_filename="output",
-    #             include_in_benchmark=True,
-    #             image_size=(512,512),
-    #             comment="Animation")
 
     # scenes = ["sponza.obj", "mcguire/vokselia_spawn_modified.obj", "mcguire/conference_room_modified.obj"]
     # for scene in scenes:
