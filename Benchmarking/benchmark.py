@@ -1,9 +1,7 @@
 import subprocess, datetime, os
-from cv2 import normalize
-import matplotlib.pyplot as plt
 import pandas as pd
 import numpy as np
-from typing import Tuple, Dict
+from typing import Dict
 from enum import Enum
 
 class BVH(Enum):
@@ -333,12 +331,6 @@ def main():
                     output_filename=f"{config['output_filename']}-SAH",
                     custom_normalize=config["custom_normalize"],
                     comment=config["comment"])
-
-
-    # scenes = ["sponza.obj", "mcguire/vokselia_spawn_modified.obj", "mcguire/conference_room_modified.obj"]
-    # for scene in scenes:
-    #     traversal_benchmark(scene)
-    #     save_benchmark_results()
 
 if __name__ == "__main__":
     main()

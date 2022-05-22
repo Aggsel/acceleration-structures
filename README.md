@@ -84,10 +84,24 @@ Requires Python >= 3.6. The algorithms can be benchmarked by running the script 
 
 ### Running the benchmarks
 The benchmarking script assumes that the binary is located at ```build/main.exe```.
-The benchmarks can then be run:
+The benchmarks can then be run from the projects root directory:
 ```bash
-    python benchmark.py
+    python Benchmarking/benchmark.py
 ```
+The default benchmarking configuration expects 6 .obj files to be present in `sample_models/mcguire` directory. These models can be retreived from [this page.](https://casual-effects.com/data/) They are the following:
+
+* salle_de_bain.obj
+* dragon.obj
+* sibenik.obj
+* sponza.obj
+* vokselia_spawn.obj
+* san_miguel.obj
+
+The benchmarking script will output traversal data into the folder traversal_steps with the naming scheme `traversal_frame_<frame>_<scene>-<bvh type>_<Render type>.txt` or `traversal_frame_99_san_miguel-LBVH_RenderType.HEATMAP.txt`. The other script in the Benchmarking folder, `traversal_stats.py` will process these files, group them together based on scene and acceleration structure and output various statistics about the number of steps traversed, such as min, max, mean and standard deviation. This script is also meant to be ran from the root directory as such:
+```bash
+    python Benchmarking/traversal_stats.py
+```
+Depending on the amount of data to be processed, this can take a while and there's no indication of progress while the script is running.
 
 ### Animations
 Additionally, the benchmarking file can be used to create camera animations. By default the animation tool will interpolate the camera position between two positions and render out a .ppm image sequence for each frame. The image sequence will then be encoded to a h264 .mp4 file, this step requires [ffmpeg](https://ffmpeg.org/) to be installed and present in your ```PATH``` environment variable.
