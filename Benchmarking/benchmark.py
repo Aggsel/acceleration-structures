@@ -32,7 +32,7 @@ benchmark_results_header = ["BVH",
                             "Traversed Nodes (total)",
                             "Traversed Nodes (min)",
                             "Traversed Nodes (max)",
-                            "Traversed (median)",
+                            "Traversed (mean)",
                             "Traversed (std)",
                             "Triangle Count",
                             "Comment"]
@@ -140,7 +140,7 @@ def run_single_benchmark(   bvh = BVH.LBVH,
     #Strip newlines, parse to int and filter empty rows.
     lines_int = [int(line.rstrip("\n")) for line in lines if line != "\n"]
     arr = np.array(lines_int)
-    median = np.median(arr)
+    median = np.mean(arr)
     min = np.min(arr)
     max = np.max(arr)
     std = np.std(arr)
@@ -217,6 +217,10 @@ def animate(model,
         #Strip newlines, parse to int and filter empty rows.
         lines_int = [int(line.rstrip("\n")) for line in lines if line != "\n"]
         joined_benchmarks.append(lines_int)
+
+        os.makedirs("traversal_steps", exist_ok=True)
+        with open(f"traversal_steps/traversal_frame_{frame}_{output_filename}_{r_type}.txt", "w") as file:
+            file.writelines(lines)
     
     joined_benchmarks = np.array(joined_benchmarks)
     # TODO: Log the total results as well.
@@ -248,7 +252,7 @@ def main():
             "target" : (0, 8, 0),
             "frames" : frames,
             "output_filename" : "salle_de_bain",
-            "custom_normalize" : 931,
+            "custom_normalize" : -1, #931
             "comment" : "Animation"
         },
         "dragon" : {
@@ -259,7 +263,7 @@ def main():
             "target" : (0, 0, 0.4),
             "frames" : frames,
             "output_filename" : "dragon",
-            "custom_normalize" : 417,
+            "custom_normalize" : -1, #417
             "comment" : "Animation"
         },
         "sibenik" : {
@@ -270,18 +274,18 @@ def main():
             "target" : (0, -10, -1),
             "frames" : frames,
             "output_filename" : "sibenik",
-            "custom_normalize" : 283,
+            "custom_normalize" : -1, #283
             "comment" : "Animation"
         },
         "sponza" : {
             "model" : "mcguire/sponza.obj",
-            "output_dir" : "Render/mcguire/Heatmap",
+            "output_dir" : "Render/sponza/Heatmap",
             "render_type" : RenderType.HEATMAP,
             "origin" : (0, 1.5, 4),
             "target" : (0, 1.5, 0),
             "frames" : frames,
             "output_filename" : "sponza",
-            "custom_normalize" : 495,
+            "custom_normalize" : -1, #495
             "comment" : "Animation"
         },
         "vokselia_spawn" : {
@@ -292,7 +296,7 @@ def main():
             "target" : (0.01,0.3,-0.5),
             "frames" : frames,
             "output_filename" : "vokselia_spawn",
-            "custom_normalize" : 1024,
+            "custom_normalize" : -1, #1024
             "comment" : "Animation"
         },
         "san_miguel" : {
@@ -303,7 +307,7 @@ def main():
             "target" : (4.5, 0, 2),
             "frames" : frames,
             "output_filename" : "san_miguel",
-            "custom_normalize" : 3447,
+            "custom_normalize" : -1, #3447
             "comment" : "Animation"
         }
     }
