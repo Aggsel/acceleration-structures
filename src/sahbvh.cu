@@ -96,8 +96,8 @@ class SAHBVH{
   std::vector<std::thread> workers;
 
   //Bins used during horizontal parallellization 
-  int bin_triangle_counts[num_bins*num_threads];  //TODO: Bad solution, there are a number of places in this
-  AABB bin_aabbs[num_bins*num_threads];           //      file where num_bins and num_threads are magic numbers.
+  int bin_triangle_counts[num_bins*num_threads];
+  AABB bin_aabbs[num_bins*num_threads];
   int tri_count_l_sweep[num_bins*num_threads];
   AABB aabb_l_sweep[num_bins*num_threads];
   int tri_count_r_sweep[num_bins*num_threads];
@@ -157,20 +157,18 @@ class SAHBVH{
 
     steady_clock::time_point start = high_resolution_clock::now();
 
-    Node* root_node = new Node();
+    Node* root_node = &ptr_host_internal_nodes[0];
     root_node->start_range = 0;
     root_node->depth = 0;
     root_node->range = triangle_count;
     root_node->aabb = scene_bounds_triangles;
     root_node->left_child_i = 1;
     root_node->right_child_i = 2;
-
     AABB centroid_bounds = AABB_CONST::inv_aabb;
     for (int i = 0; i < triangle_count; i++)
       centroid_bounds.join(triangles[triangle_ids[i]].centroid);
     root_node->centroid_aabb = centroid_bounds.extend();
 
-    ptr_host_internal_nodes[0] = *root_node;
     this->work_queue.push(root_node);
 
     // Use horizontal parallelization until there's 
@@ -249,8 +247,9 @@ void SAHBVH::horizontalParallelization(){
   //Compute k_1 for the selected axis.
   float k_1 = num_bins * (1.0 - FLT_EPSILON) / 
                 (centroid_bounds.max_bounds[axis] - centroid_bounds.min_bounds[axis]);
+
+
   //Continue sweeping in parallell
-  //Allocate bins for each thread
   workers.clear();
   for (int thread_id = 0; thread_id < num_threads; thread_id++){
     workers.push_back(std::thread([this, thread_id, current_node, start, end, k_1, axis, centroid_bounds, size, primitive_count] {
@@ -262,6 +261,7 @@ void SAHBVH::horizontalParallelization(){
       workers[i].join();
     }
   }
+
 
   AABB local_aabb_l_sweep[num_bins];
   int local_tri_count_l_sweep[num_bins];
@@ -318,8 +318,7 @@ void SAHBVH::horizontalParallelization(){
   }
 
   //Copy triangle ids to temporary array.
-  for (int i = start; i < end; i++)
-    temp_triangle_ids[i] = triangle_ids[i];
+  memcpy(&temp_triangle_ids[start], &triangle_ids[start], (end-start)*sizeof(int));
 
   float bin_width = size[axis] / num_bins;
   float split_position = centroid_bounds.min_bounds[axis] + (split_index + 1) * bin_width;
@@ -375,15 +374,12 @@ void SAHBVH::t_horizontal(SAHBVH* bvh, int thread_id, Node* current_node, int st
   int thread_end = thread_start + thread_range;
   if(thread_id == num_threads-1)
     thread_end = end;
+
   for (int i = 0; i < num_bins; i++){
-    //TODO: Not sure if we need to reset these bins.
     bvh->bin_triangle_counts[first_bin_index + i] = 0;
-    bvh->tri_count_l_sweep[first_bin_index + i] = 0;
-    bvh->tri_count_r_sweep[first_bin_index + i] = 0;
     bvh->bin_aabbs[first_bin_index + i] = AABB_CONST::inv_aabb;
-    bvh->aabb_l_sweep[first_bin_index + i] = AABB_CONST::inv_aabb;
-    bvh->aabb_r_sweep[first_bin_index + i] = AABB_CONST::inv_aabb;
   }
+
   //Calculate N_l, N_r, A_l & A_r for all triangles for all bins.
   for(int i = thread_start; i < thread_end; i++){
     int bin_index = first_bin_index + projectToBin( k_1, 
@@ -393,6 +389,7 @@ void SAHBVH::t_horizontal(SAHBVH* bvh, int thread_id, Node* current_node, int st
     bvh->bin_triangle_counts[bin_index]++;
     bvh->bin_aabbs[bin_index].join(triangles[triangle_ids[i]].centroid);
   }
+
   //Sweep from left -->>
   bvh->tri_count_l_sweep[first_bin_index] = bin_triangle_counts[first_bin_index];
   bvh->aabb_l_sweep[first_bin_index] = this->bin_aabbs[first_bin_index];
@@ -451,11 +448,8 @@ void SAHBVH::splitVertical(SAHBVH *bvh,
   node->aabb           = AABB_CONST::inv_aabb;
   AABB centroid_bounds = node->centroid_aabb;
 
-  // AABB centroid_bounds = AABB_CONST::inv_aabb;
-  for(int i = start; i < end; i++){
+  for(int i = start; i < end; i++)
     node->aabb.join(triangles[triangle_ids[i]].aabb);
-    centroid_bounds.join(triangles[triangle_ids[i]].centroid);
-  }
 
   //Decide which axis to sweep. (the longest side).
   int axis;
@@ -522,8 +516,7 @@ void SAHBVH::splitVertical(SAHBVH *bvh,
   float split_position = centroid_bounds.min_bounds[axis] + (split_index + 1) * bin_width;
 
   //Copy triangle ids to temporary array.
-  for (int i = start; i < end; i++)
-    temp_triangle_ids[i] = triangle_ids[i];
+  memcpy(&temp_triangle_ids[start], &triangle_ids[start], (end-start)*sizeof(int));
 
   //Update triangle id buffers.
   int left_i = start;

@@ -24,24 +24,12 @@ namespace AABB_CONST{
 const AABB inv_aabb = AABB(Vec3(FLT_MAX, FLT_MAX, FLT_MAX), Vec3(-FLT_MAX, -FLT_MAX, -FLT_MAX));
 }
 
-//TODO: Rewrite this to use SSE instructions.
 __device__ __host__ AABB AABB::extend(){
-    AABB extended = *this;
-    float scale[3];
-    Vec3 scene_scale;
-    float eps = 0.0001;
-    for (int i = 0; i < 3; i++) {
-        scale[i] = this->max_bounds[i] - this->min_bounds[i];
-        if (scale[i] < eps) {
-            scene_scale[i] = eps;
-        } else {
-            scene_scale[i] = eps * scale[i];
-        }
-    }
-    extended.min_bounds = extended.min_bounds - scene_scale;
-    extended.max_bounds = extended.max_bounds + scene_scale;
-
-    return extended;
+    AABB extended_aabb = *this;
+    Vec3 scale = Vec3(0.000001);
+    extended_aabb.min_bounds = extended_aabb.min_bounds - scale;
+    extended_aabb.max_bounds = extended_aabb.max_bounds + scale;
+    return extended_aabb;
 }
 
 __device__ __host__ void AABB::join(AABB otherAABB){

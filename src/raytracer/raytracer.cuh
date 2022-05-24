@@ -37,7 +37,6 @@ __global__ void normalize_output_image(Vec3 *raw_traversal_data, Vec3 *output_im
   }
 }
 
-//TODO: Reduce these rendering functions to just one?
 __global__ void d_render_heatmap(Vec3 *output_image, Camera cam, curandState *rand, RenderConfig config, Vec3 *vertices, Triangle *triangles, int vertex_count, Vec3 *normals, Node* bvh_root){
   int pixel_x = threadIdx.x + blockIdx.x * blockDim.x;
   int pixel_y = threadIdx.y + blockIdx.y * blockDim.y;

@@ -97,11 +97,10 @@ int main(int argc, char *argv[]){
     return 0;
 
   RenderConfig config(image_width, image_height, samples_per_pixel, max_bounces, 1337);
-
   Camera cam = Camera(config.img_width, config.img_height, 90.0f, 1.0f, Vec3(cam_x, cam_y, cam_z));
   Raytracer raytracer = Raytracer(config, ptr_device_vertices, ptr_device_normals, ptr_device_triangles, obj.index_count);
 
-  //Benchmark rendering
+  // Benchmark rendering
   std::chrono::steady_clock::time_point start = std::chrono::high_resolution_clock::now();
 
   Vec3* ptr_device_img;
