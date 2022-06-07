@@ -1,5 +1,9 @@
 # GPU Acceleration Structures
 
+This repo contains files as part of my bachelor thesis project where two different algorithms for bounding volume hierarchy construction were evaluated. Visualised below is the traversal complexity for one of the resulting tree structures.
+
+https://user-images.githubusercontent.com/55034708/172372121-4d7c8703-b63d-42c9-b10d-861fa25c29ee.mp4
+
 ## Requirements
 Requires a Nvidia graphics card and CUDA drivers. The program does not use any API features introduced in newer versions of CUDA, so it'll likely work even on somewhat older versions. It has however only been tested on CUDA 11.6.
 
@@ -22,7 +26,7 @@ Include debugging symbols by passing the `Zi` flag to MSVC via the NVCC `-Xcompl
 
 ## Command line arguments
 
-```bash
+```
     -i , --input <filepath>
         Which .obj file to use.
         Defaults to: sample_models/large_70.obj
@@ -66,12 +70,10 @@ Include debugging symbols by passing the `Zi` flag to MSVC via the NVCC `-Xcompl
         Defaults to: 0.0
 
     --normalize <int>
-        When rendering BVH traversal heatmap, you sometimes want to normalize the 
-        output image with regards to some arbitrary max value. This is useful when
-        rendering an animation and the entire image sequence pixel values should be 
-        normalized according to the maximum steps traversed throughout the animation 
-        (as opposed to per frame normalization, which could result in flickering).
-            Defaults to: The maximum number of steps traversed during the frame rendered.
+        When rendering a heatmap, this flag allows for more control as to 
+        what value the frame buffer should be normalized with regards to 
+        (see section "Animations" for more info).
+        Defaults to: The maximum number of steps traversed during the rendered frame.
 ```
 
 ## Benchmarking
@@ -88,7 +90,7 @@ The benchmarks can then be run from the projects root directory:
 ```bash
     python Benchmarking/benchmark.py
 ```
-The default benchmarking configuration expects 6 .obj files to be present in `sample_models/mcguire` directory. These models can be retreived from [this page.](https://casual-effects.com/data/) They are the following:
+The default benchmarking configuration expects 6 .obj files to be present in `sample_models/mcguire` directory. These models can be retreived from the [McGuire Computer Graphics Archive.](https://casual-effects.com/data/) They are the following:
 
 * salle_de_bain.obj
 * dragon.obj
@@ -106,4 +108,4 @@ Depending on the amount of data to be processed, this can take a while and there
 ### Animations
 Additionally, the benchmarking file can be used to create camera animations. By default the animation tool will interpolate the camera position between two positions and render out a .ppm image sequence for each frame. The image sequence will then be encoded to a h264 .mp4 file, this step requires [ffmpeg](https://ffmpeg.org/) to be installed and present in your ```PATH``` environment variable.
 
-To reduce flickering while rendering heatmap animations, the animation tool should be used together with the ```--normalize``` flag (see section [command line arguments](#command-line-arguments) for more information).
+When rendering BVH traversal heatmap, you sometimes want to normalize the output image with regards to some arbitrary max value. This is useful when rendering an animation and the entire image sequence pixel values should be normalized according to the maximum steps traversed throughout the animation (as opposed to per frame normalization, which could result in flickering). When normalizing the frame buffer, a custom maximum value can be supplied to the program using the ```--normalize``` flag (see section [Command line arguments](#command-line-arguments)).
