@@ -1,4 +1,4 @@
-# GPU Acceleration Structures
+# Acceleration Structures
 
 This repo contains files as part of my bachelor thesis project where two different algorithms for bounding volume hierarchy construction were evaluated. Visualised below is the traversal complexity for one of the resulting tree structures.
 
