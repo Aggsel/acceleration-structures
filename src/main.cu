@@ -26,8 +26,20 @@
 enum class BVH_Type{NONE = 0, LBVH = 1, SAHBVH = 2};
 enum class Render_Type{NONE = 0, NORMAL = 1, HEATMAP = 2};
 
+bool validCudaInstallation(){
+  int nDevices;
+  cudaGetDeviceCount(&nDevices);
+  return nDevices > 0;
+}
+
 int main(int argc, char *argv[]){
-  std::string filename = "sample_models/large_11k.obj";
+
+  if(!validCudaInstallation()){
+    printf("No CUDA devices found. Aborting.\n");
+    return 1;
+  }
+
+  std::string filename = "sample_models/sponza.obj";
   int samples_per_pixel = 30;
   int image_height = 512;
   int image_width = 512;
